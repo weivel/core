@@ -1,0 +1,9 @@
+spisor
+forebay
+claude
+opencode
+anthropic
+intisy
+github
+bayonet
+basekit

@@ -1,0 +1,67 @@
+# -DSOURCE_ROOT=<repo> reads src/ and include/ but the mutex wrapper; -DLIBRARY=<file> reads a built library's symbols.
+
+set(identifier_edge "(^|[^A-Za-z0-9_])")
+set(identifier_end "([^A-Za-z0-9_]|$)")
+set(source_patterns
+    "${identifier_edge}fopen${identifier_end}"
+    "${identifier_edge}getenv${identifier_end}"
+    "${identifier_edge}time[ \t\r\n]*\\("
+    "${identifier_edge}clock_gettime${identifier_end}"
+    "${identifier_edge}GetSystemTime")
+set(linked_symbol "(^|;)_*(imp_)?_*(w?fopen(_s)?|w?getenv(_s)?|dupenv_s|clock_gettime|time|time32|time64|gettimeofday|GetSystemTime[A-Za-z]*)(;|$)")
+
+set(offenders "")
+
+function(scan_sources)
+    file(GLOB_RECURSE files "${SOURCE_ROOT}/src/*" "${SOURCE_ROOT}/include/*")
+    list(FILTER files EXCLUDE REGEX "/src/mutex\\.c$")
+    list(LENGTH files count)
+    if(count EQUAL 0)
+        message(FATAL_ERROR "no sources found under ${SOURCE_ROOT}")
+    endif()
+    set(found "")
+    foreach(file IN LISTS files)
+        file(READ "${file}" content)
+        foreach(pattern IN LISTS source_patterns)
+            string(REGEX MATCH "${pattern}" hit "${content}")
+            if(hit)
+                list(APPEND found "${file}: ${hit}")
+            endif()
+        endforeach()
+        string(TOLOWER "${content}" lowered)
+        string(FIND "${lowered}" "json" position)
+        if(NOT position EQUAL -1)
+            list(APPEND found "${file}: json")
+        endif()
+    endforeach()
+    set(offenders "${found}" PARENT_SCOPE)
+    message(STATUS "${count} sources read")
+endfunction()
+
+function(scan_library)
+    if(NOT EXISTS "${LIBRARY}")
+        message(FATAL_ERROR "no library at ${LIBRARY}")
+    endif()
+    file(STRINGS "${LIBRARY}" names LENGTH_MINIMUM 4)
+    string(LENGTH "${names}" count)
+    if(NOT names MATCHES "(^|;)_?weivel_core_create(;|$)")
+        message(FATAL_ERROR "no weivel_core_create symbol read from ${LIBRARY}, so its symbols cannot be checked")
+    endif()
+    string(REGEX MATCHALL "${linked_symbol}" found "${names}")
+    string(REGEX REPLACE ";+" " " found "${found}")
+    set(offenders "${found}" PARENT_SCOPE)
+    message(STATUS "${count} bytes of symbol text read from ${LIBRARY}")
+endfunction()
+
+if(DEFINED SOURCE_ROOT)
+    scan_sources()
+elseif(DEFINED LIBRARY)
+    scan_library()
+else()
+    message(FATAL_ERROR "pass -DSOURCE_ROOT=<repo> or -DLIBRARY=<built library>")
+endif()
+
+if(offenders)
+    string(REPLACE ";" "\n  " listed "${offenders}")
+    message(FATAL_ERROR "forbidden calls found:\n  ${listed}")
+endif()
