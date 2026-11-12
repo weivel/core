@@ -1,0 +1,2 @@
+kind: generic
+description: The weivel plugin engine, in C, behind an ABI that never calls out.

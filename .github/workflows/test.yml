@@ -1,0 +1,16 @@
+name: Test
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: intisy/workflows/.github/workflows/test.yml@main
+    with:
+      toolchains: cmake
+      runners: '["ubuntu-latest","windows-latest","macos-latest"]'
+      cmake_configure: '-S . -B build'
+      cmake_build: '--build build --config Debug'
+      cmake_test: 'ctest --test-dir build --output-on-failure -C Debug'
