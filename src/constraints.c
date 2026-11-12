@@ -324,8 +324,11 @@ static weivel_registration *candidate(weivel_core *core, weivel_want *want) {
     }
     if (!weivel_registry_accepts(want->provider, registration)) {
         weivel_reach mismatch;
-        weivel_reach_refuse_provider(core, want->consumer, want->slot->id, want->provider,
-                                     weivel_registry_owner_name(registration), &mismatch);
+        if (weivel_reach_refuse_provider(core, want->consumer, want->slot->id, want->provider,
+                                         weivel_registry_owner_name(registration), &mismatch) != WEIVEL_STATUS_OK) {
+            weivel_core_log(core, WEIVEL_LOG_ERROR,
+                            "memory ran out reporting a want's provider mismatch, so the next poll reports it");
+        }
         weivel_reach_dispose(&mismatch);
         return NULL;
     }
@@ -338,6 +341,11 @@ static weivel_status close_at(weivel_core *core, weivel_want *want, int64_t clos
     return weivel_deadlines_add(core->deadlines, closes, want->handle);
 }
 
+/**
+ * Puts a question to the provider. A question is not an event the want owes: when it cannot be queued the want
+ * marks itself unasked, so its window ending counts as no answer, and the call answers WEIVEL_STATUS_OUT_OF_MEMORY,
+ * which only the want's start acts on, since nothing else has asked yet.
+ */
 static weivel_status ask(weivel_core *core, weivel_want *want, weivel_registration *registration, uint32_t phase,
                          int64_t closes) {
     weivel_constrained *constrained = want->constrained;
@@ -353,13 +361,14 @@ static weivel_status ask(weivel_core *core, weivel_want *want, weivel_registrati
     weivel_capacity_event asked = {want->handle, want->consumer->handle, registration->handle, constrained->request,
                                    question, {NULL, 0}};
     const weivel_numbers *constraints = unconstrained ? NULL : &constrained->wanted->constraints;
-    constrained->unasked = weivel_events_push_capacity(core->events, &asked, constraints) != WEIVEL_STATUS_OK;
+    status = weivel_events_push_capacity(core->events, &asked, constraints);
+    constrained->unasked = status != WEIVEL_STATUS_OK;
     if (constrained->unasked) {
         constrained->request = 0;
         weivel_core_log(core, WEIVEL_LOG_ERROR,
                         "memory ran out asking a provider for a want, so the question was never put");
     }
-    return WEIVEL_STATUS_OK;
+    return status;
 }
 
 static void describe_offered(weivel_text *text, const weivel_constrained *constrained,
@@ -596,20 +605,11 @@ static bool read_capacity(const weivel_capacity *capacity, weivel_capacity *reso
     return weivel_numbers_readable(&resolved->attributes);
 }
 
-static weivel_status refuse_stale_want(weivel_core *core, weivel_handle handle) {
-    weivel_text detail = {NULL, 0, 0, false};
-    append(&detail, "the handle %" PRIu64 " names no want on this core", handle);
-    weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_STALE_HANDLE, text_of(&detail),
-                               "answer with the want a capacity event named, and only until that want settles");
-    free(detail.data);
-    return WEIVEL_STATUS_REFUSED;
-}
-
 static weivel_status report_capacity(weivel_core *core, weivel_handle want, weivel_handle registration,
                                      const weivel_capacity *capacity, int64_t now) {
     void *record;
     if (weivel_handles_resolve(core->handles, want, WEIVEL_RECORD_WANT, &record) != WEIVEL_STATUS_OK) {
-        return refuse_stale_want(core, want);
+        return WEIVEL_STATUS_NONE;
     }
     return weivel_constraints_report(core, record, registration, capacity, now);
 }
@@ -631,7 +631,7 @@ weivel_status weivel_report_capacity(weivel_core *core, weivel_handle want, weiv
     } else {
         status = report_capacity(core, want, registration, &resolved, now);
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }

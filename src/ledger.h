@@ -39,16 +39,19 @@ bool weivel_kept_refusal_copy(weivel_kept_refusal *kept, uint32_t code, const ch
 typedef enum weivel_relationship {
     WEIVEL_RELATIONSHIP_SERVICE_PROVIDED = 1,
     WEIVEL_RELATIONSHIP_CAPABILITY_PROVIDED = 2,
-    WEIVEL_RELATIONSHIP_SERVICE_CONSUMED = 3
+    WEIVEL_RELATIONSHIP_SERVICE_CONSUMED = 3,
+    WEIVEL_RELATIONSHIP_CAPABILITY_CONSUMED = 4
 } weivel_relationship;
 
 /**
- * Records that `plugin` made a relationship with `id`. Called with the core's mutex held.
- *
- * @implNote Recording follows the act it records and never undoes it: when memory runs out, the ledger misses the
- * relationship and an error log says so, which is cheaper to explain than a registration refused for bookkeeping.
+ * Records that `plugin` makes a relationship with `id`, before the act it records, so a call that cannot record it
+ * changes nothing: `*added` says whether this call added the id, and a call failing after it takes the id back with
+ * weivel_ledger_unnote. The host has no row, so nothing is recorded for it.
  */
-void weivel_ledger_note(weivel_core *core, struct weivel_plugin *plugin, uint32_t relationship, const char *id);
+weivel_status weivel_ledger_note(struct weivel_plugin *plugin, uint32_t relationship, const char *id, bool *added);
+
+/** Takes back the id the last weivel_ledger_note of `relationship` added, when `added` says it did. */
+void weivel_ledger_unnote(struct weivel_plugin *plugin, uint32_t relationship, bool added);
 
 /** Starts the row's description of a new activation: no relationships, not verified, no activation refusal. */
 void weivel_ledger_begin_activation(struct weivel_plugin *plugin);
@@ -56,9 +59,8 @@ void weivel_ledger_begin_activation(struct weivel_plugin *plugin);
 /** Records that the plugin's activation passed verification. */
 void weivel_ledger_note_verified(struct weivel_plugin *plugin);
 
-/** Keeps the refusal verification answered the plugin's activation, logging an error when it cannot be copied. */
-void weivel_ledger_note_refused_activation(weivel_core *core, struct weivel_plugin *plugin, uint32_t code,
-                                           const char *detail, const char *fix);
+/** Keeps `refusal`, which verification answered the plugin's activation, taking it over and leaving it empty. */
+void weivel_ledger_keep_refused_activation(struct weivel_plugin *plugin, weivel_kept_refusal *refusal);
 
 /** Frees everything the ledger keeps for a plugin. */
 void weivel_ledger_free_plugin(struct weivel_plugin *plugin);

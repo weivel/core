@@ -19,6 +19,8 @@ struct weivel_table {
     table_entry **buckets;
     uint32_t capacity;
     uint32_t count;
+    /** Entries allocated ahead by weivel_table_reserve, chained by `next`, so an add that uses one cannot fail. */
+    table_entry *spares;
 };
 
 static uint64_t hash_of(const void *key, size_t length) {
@@ -48,6 +50,7 @@ void weivel_table_destroy(weivel_table *table) {
     if (table == NULL) {
         return;
     }
+    weivel_table_drop_spares(table);
     for (uint32_t bucket = 0; bucket < table->capacity; bucket++) {
         table_entry *entry = table->buckets[bucket];
         while (entry != NULL) {
@@ -77,6 +80,11 @@ void *weivel_table_find(const weivel_table *table, const void *key, size_t lengt
     return entry == NULL ? NULL : entry->value;
 }
 
+/**
+ * Doubles the buckets, which only shortens chains, so a table that cannot grow stays correct, just slower.
+ * @implNote The guard keeps `capacity` a power of two that fits a uint32_t, which `hash & (capacity - 1)` relies on
+ * for every bucket index; past it the table stops growing rather than wrapping to 0.
+ */
 static void grow(weivel_table *table) {
     if (table->capacity > UINT32_MAX / 2) {
         return;
@@ -111,8 +119,10 @@ weivel_status weivel_table_add(weivel_table *table, const void *key, size_t leng
         (*place)->value = value;
         return WEIVEL_STATUS_OK;
     }
-    table_entry *entry = weivel_memory_allocate(sizeof *entry);
-    if (entry == NULL) {
+    table_entry *entry = table->spares;
+    if (entry != NULL) {
+        table->spares = entry->next;
+    } else if ((entry = weivel_memory_allocate(sizeof *entry)) == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
     entry->key = key;
@@ -135,6 +145,26 @@ bool weivel_table_remove(weivel_table *table, const void *key, size_t length) {
     free(entry);
     table->count--;
     return true;
+}
+
+weivel_status weivel_table_reserve(weivel_table *table, uint32_t count) {
+    for (uint32_t index = 0; index < count; index++) {
+        table_entry *entry = weivel_memory_allocate(sizeof *entry);
+        if (entry == NULL) {
+            return WEIVEL_STATUS_OUT_OF_MEMORY;
+        }
+        entry->next = table->spares;
+        table->spares = entry;
+    }
+    return WEIVEL_STATUS_OK;
+}
+
+void weivel_table_drop_spares(weivel_table *table) {
+    while (table->spares != NULL) {
+        table_entry *next = table->spares->next;
+        free(table->spares);
+        table->spares = next;
+    }
 }
 
 void *weivel_table_find_text(const weivel_table *table, const char *key) {

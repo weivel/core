@@ -139,6 +139,23 @@ weivel_status weivel_handles_release(weivel_handles *handles, weivel_handle hand
     return WEIVEL_STATUS_OK;
 }
 
+void weivel_handles_unissue(weivel_handles *handles, weivel_handle handle, uint32_t kind) {
+    handle_slot *entry = live_slot(handles, handle, kind);
+    if (entry == NULL) {
+        return;
+    }
+    uint32_t slot = slot_of(handle);
+    entry->occupied = false;
+    entry->record = NULL;
+    handles->live--;
+    if (entry->generation == 1 && slot == handles->count - 1) {
+        handles->count--;
+        return;
+    }
+    entry->next_free = handles->first_free;
+    handles->first_free = slot;
+}
+
 weivel_handle weivel_handles_set_generation(weivel_handles *handles, weivel_handle handle, uint32_t kind,
                                             uint32_t generation) {
     handle_slot *entry = live_slot(handles, handle, kind);

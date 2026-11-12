@@ -771,12 +771,6 @@ static void a_long_text_is_never_cut_from_a_registry_refusal(void) {
     CHECK(weivel_advance(core, 5, NULL) == WEIVEL_STATUS_OK);
     CHECK(carried_whole(core, owned) == 1);
 
-    weivel_handle watch = 0;
-    CHECK(weivel_watch_service(core, waiting, later, &watch, NULL) == WEIVEL_STATUS_OK);
-    core->registry->fail_next_holding = true;
-    weivel_handle arrived = 0;
-    CHECK(weivel_register_service(core, provider, later, &arrived, NULL) == WEIVEL_STATUS_OK);
-    CHECK(carried_whole(core, later) == 1);
     free(later);
     free(identity);
     free(owned);

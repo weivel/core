@@ -209,9 +209,9 @@ static weivel_status refuse_with(weivel_core *core, uint32_t code, char *detail,
     if (detail == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_events_push_refusal(core->events, code, detail, fix);
+    weivel_status status = weivel_events_push_refusal(core->events, code, detail, fix);
     free(detail);
-    return WEIVEL_STATUS_REFUSED;
+    return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_REFUSED : status;
 }
 
 static weivel_status refuse_taken_name(weivel_core *core, const char *import_name) {
@@ -227,8 +227,9 @@ static weivel_status refuse_identity(weivel_core *core, const char *identity) {
 }
 
 static weivel_status refuse_manifest(weivel_core *core, const weivel_manifest_problem *problem) {
-    weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_MALFORMED_MANIFEST, problem->detail, problem->fix);
-    return WEIVEL_STATUS_REFUSED;
+    weivel_status status =
+        weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_MALFORMED_MANIFEST, problem->detail, problem->fix);
+    return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_REFUSED : status;
 }
 
 static weivel_status keep_plugin(weivel_core *core, weivel_plugin *plugin) {
@@ -245,7 +246,7 @@ static weivel_status keep_plugin(weivel_core *core, weivel_plugin *plugin) {
     }
     status = add_plugin(core->plugins, plugin);
     if (status != WEIVEL_STATUS_OK) {
-        weivel_handles_release(core->handles, plugin->handle, WEIVEL_RECORD_PLUGIN);
+        weivel_handles_unissue(core->handles, plugin->handle, WEIVEL_RECORD_PLUGIN);
     }
     return status;
 }
@@ -265,7 +266,7 @@ static weivel_status register_manifest(weivel_core *core, const weivel_manifest 
     } else if (status == WEIVEL_STATUS_OK) {
         status = keep_plugin(core, plugin);
     } else if (status == WEIVEL_STATUS_REFUSED) {
-        refuse_manifest(core, &problem);
+        status = refuse_manifest(core, &problem);
         weivel_manifest_problem_free(&problem);
     }
     if (status != WEIVEL_STATUS_OK) {
@@ -295,7 +296,7 @@ weivel_status weivel_register_manifest(weivel_core *core, const weivel_manifest 
         *plugin = 0;
         status = register_manifest(core, manifest, plugin);
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
@@ -308,10 +309,11 @@ weivel_status weivel_core_plugin(weivel_core *core, weivel_handle handle, weivel
     }
     char detail[96];
     snprintf(detail, sizeof detail, "the handle %" PRIu64 " names no plugin on this core", handle);
-    weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_STALE_HANDLE, detail,
-                               "pass only handles weivel_register_manifest answered on this core");
+    weivel_status status =
+        weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_STALE_HANDLE, detail,
+                                   "pass only handles weivel_register_manifest answered on this core");
     *plugin = NULL;
-    return WEIVEL_STATUS_REFUSED;
+    return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_REFUSED : status;
 }
 
 static weivel_status refuse_state(weivel_core *core, const weivel_plugin *plugin, const char *what, const char *fix) {
@@ -326,10 +328,35 @@ static weivel_status refuse_released(weivel_core *core, const weivel_plugin *plu
 
 weivel_status weivel_core_opened_plugin(weivel_core *core, weivel_handle handle, weivel_plugin **plugin) {
     weivel_status status = weivel_core_plugin(core, handle, plugin);
-    if (status == WEIVEL_STATUS_OK && (*plugin)->state == WEIVEL_PLUGIN_REGISTERED) {
+    if (status == WEIVEL_STATUS_OK && !(*plugin)->opened) {
         status = refuse_state(core, *plugin, "has not been opened", "open it with weivel_open_plugin first");
     }
     return status;
+}
+
+weivel_status weivel_core_asking_plugin(weivel_core *core, weivel_handle handle, weivel_plugin **plugin) {
+    if (handle == WEIVEL_HOST) {
+        *plugin = &core->host_plugin;
+        return WEIVEL_STATUS_OK;
+    }
+    return weivel_core_opened_plugin(core, handle, plugin);
+}
+
+void weivel_plugins_init_host(weivel_plugin *host) {
+    memset(host, 0, sizeof *host);
+    host->handle = WEIVEL_HOST;
+    host->state = WEIVEL_PLUGIN_OPEN;
+    host->opened = true;
+    host->is_host = true;
+    host->identity = "the host";
+    weivel_list_init(&host->registrations);
+    weivel_list_init(&host->wants);
+    weivel_list_init(&host->watches);
+    weivel_list_init(&host->holdings);
+    weivel_list_init(&host->provisions);
+    weivel_list_init(&host->capability_watches);
+    weivel_list_init(&host->capability_holdings);
+    weivel_list_init(&host->in_order);
 }
 
 static void forget_identity(weivel_core *core, weivel_plugin *plugin) {
@@ -347,6 +374,7 @@ static weivel_status open_plugin(weivel_core *core, weivel_plugin *plugin, const
     }
     plugin->payload = options->payload;
     plugin->state = WEIVEL_PLUGIN_OPEN;
+    plugin->opened = true;
     weivel_ledger_begin_activation(plugin);
     return WEIVEL_STATUS_OK;
 }
@@ -378,7 +406,7 @@ weivel_status weivel_open_plugin(weivel_core *core, weivel_handle plugin, const 
     } else if ((status = weivel_core_plugin(core, plugin, &record)) == WEIVEL_STATUS_OK) {
         status = open_plugin(core, record, &resolved);
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
@@ -399,9 +427,19 @@ weivel_status weivel_plugin_payload(weivel_core *core, weivel_handle plugin, uin
     } else {
         *payload = 0;
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
+}
+
+/** Reserves every notification stripping the plugin will owe; on failure nothing is reserved or changed. */
+static weivel_status prepare_strip(weivel_core *core, const weivel_plugin *plugin) {
+    uint64_t notices =
+        (uint64_t)weivel_capabilities_strip_notices(plugin) + weivel_registry_strip_notices(plugin);
+    if (notices > UINT32_MAX) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    return weivel_core_reserve_notices(core, (uint32_t)notices);
 }
 
 /**
@@ -413,14 +451,19 @@ static void strip_plugin(weivel_core *core, weivel_plugin *plugin) {
     weivel_registry_strip(core, plugin);
 }
 
-static void release_plugin(weivel_core *core, weivel_plugin *plugin) {
+static weivel_status release_plugin(weivel_core *core, weivel_plugin *plugin) {
     if (plugin->state == WEIVEL_PLUGIN_RELEASED) {
-        return;
+        return WEIVEL_STATUS_OK;
+    }
+    weivel_status status = prepare_strip(core, plugin);
+    if (status != WEIVEL_STATUS_OK) {
+        return status;
     }
     strip_plugin(core, plugin);
     forget_identity(core, plugin);
     weivel_table_remove_text(core->plugins->names, plugin->manifest.value.import_name);
     plugin->state = WEIVEL_PLUGIN_RELEASED;
+    return WEIVEL_STATUS_OK;
 }
 
 static void log_quarantined(weivel_core *core, const weivel_plugin *plugin) {
@@ -446,6 +489,11 @@ static weivel_status quarantine_plugin(weivel_core *core, weivel_plugin *plugin,
     if (reason != NULL && !weivel_kept_refusal_copy(&given, reason->code, reason->detail, reason->fix)) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
+    weivel_status status = prepare_strip(core, plugin);
+    if (status != WEIVEL_STATUS_OK) {
+        weivel_kept_refusal_clear(&given);
+        return status;
+    }
     strip_plugin(core, plugin);
     plugin->state = WEIVEL_PLUGIN_QUARANTINED;
     if (reason != NULL) {
@@ -464,9 +512,9 @@ weivel_status weivel_release_plugin(weivel_core *core, weivel_handle plugin, uin
     weivel_plugin *record = NULL;
     weivel_status status = weivel_core_plugin(core, plugin, &record);
     if (status == WEIVEL_STATUS_OK) {
-        release_plugin(core, record);
+        status = release_plugin(core, record);
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
@@ -496,7 +544,7 @@ weivel_status weivel_quarantine_plugin(weivel_core *core, weivel_handle plugin,
     } else if ((status = weivel_core_plugin(core, plugin, &record)) == WEIVEL_STATUS_OK) {
         status = quarantine_plugin(core, record, reason == NULL ? NULL : &resolved);
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
@@ -504,6 +552,10 @@ weivel_status weivel_quarantine_plugin(weivel_core *core, weivel_handle plugin,
 static weivel_status forget_plugin(weivel_core *core, weivel_plugin *plugin) {
     if (plugin->state != WEIVEL_PLUGIN_RELEASED) {
         return refuse_state(core, plugin, "is not released", "release it before forgetting it");
+    }
+    weivel_status status = prepare_strip(core, plugin);
+    if (status != WEIVEL_STATUS_OK) {
+        return status;
     }
     strip_plugin(core, plugin);
     weivel_handles_release(core->handles, plugin->handle, WEIVEL_RECORD_PLUGIN);
@@ -522,7 +574,7 @@ weivel_status weivel_forget_plugin(weivel_core *core, weivel_handle plugin, uint
     if (status == WEIVEL_STATUS_OK) {
         status = forget_plugin(core, record);
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }

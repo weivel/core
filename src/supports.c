@@ -77,7 +77,7 @@ weivel_status weivel_supports(weivel_core *core, const weivel_manifest *manifest
     } else {
         status = answer_supports(core, manifest, answer);
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }

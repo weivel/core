@@ -838,7 +838,7 @@ weivel_status weivel_plan_activation(weivel_core *core, const weivel_handle *plu
     }
     weivel_mutex_lock(core->mutex);
     weivel_status status = check_and_plan(core, plugins, count, edge_source, host_provided, plan);
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }

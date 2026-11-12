@@ -86,10 +86,13 @@ typedef struct weivel_registry {
     /** The last request a capacity question was given; each question takes the next, so none repeats. */
     uint64_t last_request;
     /**
-     * When set, the next holding answers out of memory and the switch clears.
-     * @implNote Exists so a test can reach the out-of-memory path of a holding without exhausting the heap.
+     * Holdings allocated ahead by weivel_registry_prepare_holdings, chained by `by_registration`, each with its
+     * revocation already reserved, so recording a holding inside a prepared call cannot fail.
      */
-    bool fail_next_holding;
+    weivel_link spare_holdings;
+    uint32_t spare_holding_count;
+    uint32_t want_count;
+    uint32_t watch_count;
 } weivel_registry;
 
 weivel_registry *weivel_registry_create(void);
@@ -113,18 +116,38 @@ const char *weivel_registry_owner_name(const weivel_registration *registration);
 bool weivel_registry_accepts(const char *provider, const weivel_registration *registration);
 
 /**
- * Records that `plugin` holds `registration`, once however often it is handed it. On WEIVEL_STATUS_OUT_OF_MEMORY
- * nothing is recorded, and the caller must not hand the plugin the registration, since it would never be told of
- * its revocation.
+ * Allocates `count` holdings ahead, each reserving the revocation it will owe, so the next `count` holdings this
+ * call records cannot fail. On WEIVEL_STATUS_OUT_OF_MEMORY the call changes nothing; whatever was allocated ahead
+ * is freed when the call ends.
+ */
+weivel_status weivel_registry_prepare_holdings(weivel_core *core, uint32_t count);
+
+/** Frees the holdings allocated ahead that no holding used, and gives back their reservations. */
+void weivel_registry_finish(weivel_core *core);
+
+/**
+ * Records that `plugin` holds `registration`, once however often it is handed it, using a holding allocated ahead
+ * when there is one. On WEIVEL_STATUS_OUT_OF_MEMORY nothing is recorded, and the caller must not hand the plugin
+ * the registration, since it would never be told of its revocation.
  */
 weivel_status weivel_registry_hold(weivel_core *core, weivel_registration *registration, weivel_plugin *plugin);
 
-/** Ends a registration: revokes it to every holder, then tells every watch of its id that accepts its owner. */
+/** How many watches of the slot's id there are: the most notifications one change to it can owe. */
+uint32_t weivel_registry_watchers(const weivel_slot *slot);
+
+/**
+ * Ends a registration: revokes it to every holder, then tells every watch of its id that accepts its owner, each
+ * notification from a reservation the caller made (weivel_core_reserve_notices).
+ */
 void weivel_registry_unregister(weivel_core *core, weivel_registration *registration);
+
+/** How many notifications weivel_registry_strip can owe for the plugin, at most. */
+uint32_t weivel_registry_strip_notices(const weivel_plugin *plugin);
 
 /**
  * Takes everything from a plugin in one go: its watches stop, what it registered is unregistered, every want it
- * waits on is rejected as stopped, and what it holds is revoked to it, in that order.
+ * waits on is rejected as stopped, and what it holds is revoked to it, in that order. The caller has reserved
+ * weivel_registry_strip_notices of notifications, so nothing in it can fail.
  */
 void weivel_registry_strip(weivel_core *core, weivel_plugin *plugin);
 
@@ -148,13 +171,23 @@ void weivel_reach_dispose(weivel_reach *reach);
 
 /**
  * Checks a plugin's attempt on `id`: the declaration first, then a provider mismatch against the owner registered
- * now, then lateness. A refusal is reported once per plugin and id.
+ * now, then lateness. A refusal is reported once per plugin and id. The host reaches every id. On
+ * WEIVEL_STATUS_OUT_OF_MEMORY a refusal could not be reported and nothing was recorded.
  */
-void weivel_reach_check(weivel_core *core, weivel_plugin *plugin, const char *id, weivel_reach *reach);
+weivel_status weivel_reach_check(weivel_core *core, weivel_plugin *plugin, const char *id, weivel_reach *reach);
 
-/** Fills and reports, once per plugin and id, the refusal of a consumer bound to `provider` that `owner` serves. */
-void weivel_reach_refuse_provider(weivel_core *core, weivel_plugin *plugin, const char *id, const char *provider,
-                                  const char *owner, weivel_reach *reach);
+/**
+ * Fills and reports, once per plugin and id, the refusal of a consumer bound to `provider` that `owner` serves;
+ * WEIVEL_STATUS_OUT_OF_MEMORY, with nothing recorded, when it cannot.
+ */
+weivel_status weivel_reach_refuse_provider(weivel_core *core, weivel_plugin *plugin, const char *id,
+                                           const char *provider, const char *owner, weivel_reach *reach);
+
+/**
+ * Takes back the report the call now running made for the plugin, when its newest report is numbered `since` or
+ * later, together with its event, which must be the newest queued.
+ */
+void weivel_reach_unreport_since(weivel_core *core, weivel_plugin *plugin, uint64_t since);
 
 /** Logs a late attempt (`what` is "want", "watch" or "registration") from a plugin no longer running. */
 void weivel_reach_log_late(weivel_core *core, const weivel_plugin *plugin, const char *what, const char *id);
@@ -164,10 +197,12 @@ void weivel_reach_log_late_capability(weivel_core *core, const weivel_plugin *pl
                                       const char *id);
 
 /**
- * Whether a plugin may reach capability `id`, which it consumes or provides; when it may not, the refusal is
- * reported once per plugin and id. Lateness is not looked at, so the declaration is always checked first.
+ * Whether a plugin may reach capability `id`, which it consumes or provides: WEIVEL_STATUS_OK when it may,
+ * WEIVEL_STATUS_REFUSED, the refusal reported once per plugin and id, when it may not, and
+ * WEIVEL_STATUS_OUT_OF_MEMORY when the report could not be made. Lateness is not looked at, so the declaration is
+ * always checked first. The host reaches every id.
  */
-bool weivel_reach_capability(weivel_core *core, weivel_plugin *plugin, const char *id);
+weivel_status weivel_reach_capability(weivel_core *core, weivel_plugin *plugin, const char *id);
 
 /** The texts a want gets when its plugin stops while it waits, or asks after it stopped. */
 void weivel_reach_stopped(const char *id, weivel_reach *reach);
@@ -178,19 +213,33 @@ const weivel_reach_record *weivel_reach_reported_at(const weivel_plugin *plugin,
 
 /**
  * Settles a want with a registration, which its consumer then holds, `degraded` when it is a constrained want's
- * acceptance of a provider that never met its constraints. On WEIVEL_STATUS_OUT_OF_MEMORY the holding could not be
- * recorded, so the want is left exactly as it was, still waiting.
+ * acceptance of a provider that never met its constraints; the settlement is the want's own reservation. On
+ * WEIVEL_STATUS_OUT_OF_MEMORY the holding could not be recorded, so the want is left exactly as it was, still
+ * waiting.
  */
 weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration,
                                     bool degraded);
 
-/** Rejects a want with a refusal. */
+/** Rejects a want with a refusal, delivered from the want's own reservation. */
 void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, const char *detail, const char *fix);
 
-/** Withdraws a want without settling it. */
+/** Withdraws a want without settling it, giving back its reservation. */
 void weivel_waiting_withdraw(weivel_core *core, weivel_want *want);
 
-/** Settles, in the order they asked, every want on a slot that accepts what is registered there now. */
+/** How many wants wait on a slot without constraints: the most holdings one arrival there can make. */
+uint32_t weivel_waiting_count(const weivel_slot *slot);
+
+/**
+ * Reports, once per plugin, every want on the slot bound to a provider other than the owner of `registration`, as
+ * its arrival will find them. All or nothing: on WEIVEL_STATUS_OUT_OF_MEMORY every report this made is taken back.
+ */
+weivel_status weivel_waiting_report_mismatches(weivel_core *core, const weivel_slot *slot,
+                                               const weivel_registration *registration);
+
+/**
+ * Settles, in the order they asked, every want on a slot that accepts what is registered there now, from holdings
+ * the caller prepared.
+ */
 void weivel_waiting_arrival(weivel_core *core, weivel_slot *slot);
 
 /**

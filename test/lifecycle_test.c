@@ -3,6 +3,7 @@
 #include <weivel/core.h>
 
 #include "core_internal.h"
+#include "memory.h"
 #include "registry_support.h"
 
 static bool same_live_counts(const weivel_census *left, const weivel_census *right) {
@@ -85,8 +86,8 @@ static void a_slot_goes_when_nothing_uses_it(void) {
     weivel_core_destroy(core);
 }
 
-static void fail_next_holding(weivel_core *core) {
-    core->registry->fail_next_holding = true;
+static void fail_next_allocation(void) {
+    weivel_memory_fail_at(1);
 }
 
 static void a_get_that_cannot_be_held_hands_nothing_over(void) {
@@ -94,7 +95,7 @@ static void a_get_that_cannot_be_held_hands_nothing_over(void) {
     plugin_spec spec = {"calendar", NULL, {"clock"}, {NULL}, {NULL}};
     weivel_handle plugin = open_spec(core, &spec);
     weivel_handle registration = register_service(core, WEIVEL_HOST, "clock");
-    fail_next_holding(core);
+    fail_next_allocation();
     weivel_handle got = 5;
     CHECK(weivel_get_service(core, plugin, "clock", &got, NULL) == WEIVEL_STATUS_OUT_OF_MEMORY);
     CHECK(got == 0);
@@ -112,7 +113,7 @@ static void a_want_that_cannot_be_held_is_not_settled(void) {
     register_service(core, WEIVEL_HOST, "clock");
     weivel_census before;
     weivel_core_census(core, &before);
-    fail_next_holding(core);
+    fail_next_allocation();
     weivel_handle want = 5;
     forget(core);
     CHECK(weivel_want_service(core, plugin, "clock", NULL, &want, NULL) == WEIVEL_STATUS_OUT_OF_MEMORY);
@@ -125,40 +126,49 @@ static void a_want_that_cannot_be_held_is_not_settled(void) {
     weivel_core_destroy(core);
 }
 
-static void an_arrival_that_cannot_be_held_leaves_the_want_waiting(void) {
+/** An arrival that cannot make ready what it owes is refused whole: the want still waits, and nothing is told. */
+static void an_arrival_that_runs_out_of_memory_changes_nothing(void) {
     weivel_core *core = core_knowing(NULL, 0);
     plugin_spec spec = {"calendar", NULL, {"clock"}, {NULL}, {NULL}};
     weivel_handle plugin = open_spec(core, &spec);
     weivel_handle want = want_untimed(core, plugin, "clock");
-    fail_next_holding(core);
-    weivel_handle first = register_service(core, WEIVEL_HOST, "clock");
-    drain(core);
-    CHECK(settlement_of(want) == NULL);
-    CHECK(nth_of(WEIVEL_EVENT_LOG, 0)->level == WEIVEL_LOG_ERROR);
     forget(core);
-    CHECK(weivel_unregister(core, first, NULL) == WEIVEL_STATUS_OK);
+    weivel_census before;
+    weivel_core_census(core, &before);
+    fail_next_allocation();
+    weivel_handle first = 5;
+    CHECK(weivel_register_service(core, WEIVEL_HOST, "clock", &first, NULL) == WEIVEL_STATUS_OUT_OF_MEMORY);
+    CHECK(first == 0);
+    drain(core);
+    CHECK(the_journal.count == 0);
+    weivel_census after;
+    weivel_core_census(core, &after);
+    CHECK(memcmp(&before, &after, sizeof before) == 0);
     weivel_handle second = register_service(core, WEIVEL_HOST, "clock");
     drain(core);
-    CHECK(count_kind(WEIVEL_EVENT_REVOKED) == 0);
     CHECK(settlement_of(want) != NULL && settlement_of(want)->implementation == second);
     weivel_core_destroy(core);
 }
 
-static void a_watch_that_cannot_hold_does_not_hear(void) {
+/** A registration a watch cannot be made ready to hear is not made, so the watch hears it only once it is. */
+static void a_registration_its_watch_cannot_hear_is_not_made(void) {
     weivel_core *core = core_knowing(NULL, 0);
     plugin_spec spec = {"calendar", NULL, {"clock"}, {NULL}, {NULL}};
     weivel_handle plugin = open_spec(core, &spec);
     weivel_handle watch = 0;
     CHECK(weivel_watch_service(core, plugin, "clock", &watch, NULL) == WEIVEL_STATUS_OK);
-    fail_next_holding(core);
-    weivel_handle registration = register_service(core, WEIVEL_HOST, "clock");
+    forget(core);
+    fail_next_allocation();
+    weivel_handle refused = 0;
+    CHECK(weivel_register_service(core, WEIVEL_HOST, "clock", &refused, NULL) == WEIVEL_STATUS_OUT_OF_MEMORY);
     drain(core);
     CHECK(heard_by(watch, WEIVEL_CHANGE_REGISTERED) == 0);
-    CHECK(nth_of(WEIVEL_EVENT_LOG, 0)->level == WEIVEL_LOG_ERROR);
-    forget(core);
+    weivel_handle registration = register_service(core, WEIVEL_HOST, "clock");
+    drain(core);
+    CHECK(heard_by(watch, WEIVEL_CHANGE_REGISTERED) == 1);
     CHECK(weivel_unregister(core, registration, NULL) == WEIVEL_STATUS_OK);
     drain(core);
-    CHECK(count_kind(WEIVEL_EVENT_REVOKED) == 0);
+    CHECK(count_kind(WEIVEL_EVENT_REVOKED) == 1);
     weivel_core_destroy(core);
 }
 
@@ -167,7 +177,7 @@ int main(void) {
     a_slot_goes_when_nothing_uses_it();
     a_get_that_cannot_be_held_hands_nothing_over();
     a_want_that_cannot_be_held_is_not_settled();
-    an_arrival_that_cannot_be_held_leaves_the_want_waiting();
-    a_watch_that_cannot_hold_does_not_hear();
+    an_arrival_that_runs_out_of_memory_changes_nothing();
+    a_registration_its_watch_cannot_hear_is_not_made();
     return check_summary("lifecycle_test");
 }

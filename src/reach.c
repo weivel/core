@@ -7,7 +7,7 @@
 #include "text.h"
 
 static weivel_reach_record *append_record(weivel_registry *registry, weivel_plugin *plugin, uint32_t kind,
-                                          const char *id) {
+                                          uint32_t code, const char *id) {
     if (plugin->reported_count == plugin->reported_capacity) {
         if (plugin->reported_capacity > UINT32_MAX / 2) {
             return NULL;
@@ -28,48 +28,80 @@ static weivel_reach_record *append_record(weivel_registry *registry, weivel_plug
     memcpy(copy, id, length);
     weivel_reach_record *record = &plugin->reported[plugin->reported_count++];
     record->kind = kind;
+    record->code = code;
     record->plugin = plugin->handle;
     record->id = copy;
     record->sequence = registry->next_report++;
     return record;
 }
 
+static weivel_table *reported_of(weivel_plugin *plugin, uint32_t kind) {
+    return kind == WEIVEL_REACH_CAPABILITY ? plugin->reported_capabilities : plugin->reported_services;
+}
+
+/** Takes back the plugin's newest record, which the call now running made and is undoing. */
+static void pop_record(weivel_core *core, weivel_plugin *plugin) {
+    weivel_reach_record *record = &plugin->reported[--plugin->reported_count];
+    weivel_table_remove_text(reported_of(plugin, record->kind), record->id);
+    free(record->id);
+    core->registry->next_report--;
+}
+
 /**
  * Reports a refusal the first time this plugin meets it for this kind and id; every later time it is answered
- * alone.
+ * alone. All or nothing: when memory runs out for the record, its texts or its event, nothing is recorded, and the
+ * refusal is reported the next time it is met.
  */
-static void report_kind_once(weivel_core *core, weivel_plugin *plugin, uint32_t kind, const char *id,
-                             const weivel_reach *reach) {
-    weivel_table *reported =
-        kind == WEIVEL_REACH_CAPABILITY ? plugin->reported_capabilities : plugin->reported_services;
+static weivel_status report_kind_once(weivel_core *core, weivel_plugin *plugin, uint32_t kind, const char *id,
+                                      const weivel_reach *reach) {
+    weivel_table *reported = reported_of(plugin, kind);
     if (weivel_table_find_text(reported, id) != NULL) {
-        return;
+        return WEIVEL_STATUS_OK;
     }
-    weivel_reach_record *record = append_record(core->registry, plugin, kind, id);
+    if (reach->detail == NULL || reach->fix == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    weivel_reach_record *record = append_record(core->registry, plugin, kind, reach->code, id);
     if (record == NULL) {
-        return;
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
     if (weivel_table_add_text(reported, record->id, record->id) != WEIVEL_STATUS_OK) {
         free(record->id);
         plugin->reported_count--;
+        core->registry->next_report--;
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    weivel_status status =
+        weivel_events_push_reach(core->events, kind, plugin->handle, id, reach->code, reach->detail, reach->fix);
+    if (status != WEIVEL_STATUS_OK) {
+        pop_record(core, plugin);
+    }
+    return status;
+}
+
+void weivel_reach_unreport_since(weivel_core *core, weivel_plugin *plugin, uint64_t since) {
+    if (plugin->reported_count == 0 || plugin->reported[plugin->reported_count - 1].sequence < since) {
         return;
     }
-    weivel_events_push_reach(core->events, kind, plugin->handle, id, reach->code, reach->detail, reach->fix);
+    pop_record(core, plugin);
+    weivel_events_drop_newest(core->events);
 }
 
-static void report_once(weivel_core *core, weivel_plugin *plugin, const char *id, const weivel_reach *reach) {
-    report_kind_once(core, plugin, WEIVEL_REACH_SERVICE, id, reach);
+static weivel_status report_once(weivel_core *core, weivel_plugin *plugin, const char *id,
+                                 const weivel_reach *reach) {
+    return report_kind_once(core, plugin, WEIVEL_REACH_SERVICE, id, reach);
 }
 
-static void refuse_undeclared(weivel_core *core, weivel_plugin *plugin, const char *id, weivel_reach *reach) {
+static weivel_status refuse_undeclared(weivel_core *core, weivel_plugin *plugin, const char *id,
+                                       weivel_reach *reach) {
     reach->code = WEIVEL_REFUSAL_UNDECLARED;
     reach->detail = weivel_text_format("reached for service \"%s\", which it does not declare", id);
     reach->fix = weivel_text_format("add \"%s\" to the services it consumes in its manifest", id);
-    report_once(core, plugin, id, reach);
+    return report_once(core, plugin, id, reach);
 }
 
-void weivel_reach_refuse_provider(weivel_core *core, weivel_plugin *plugin, const char *id, const char *provider,
-                                  const char *owner, weivel_reach *reach) {
+weivel_status weivel_reach_refuse_provider(weivel_core *core, weivel_plugin *plugin, const char *id,
+                                           const char *provider, const char *owner, weivel_reach *reach) {
     reach->code = WEIVEL_REFUSAL_WRONG_PROVIDER;
     reach->late = false;
     reach->provider = provider;
@@ -78,25 +110,28 @@ void weivel_reach_refuse_provider(weivel_core *core, weivel_plugin *plugin, cons
         weivel_text_format("reached for service \"%s\", which it binds to %s but %s provides", id, provider, owner);
     reach->fix = weivel_text_format(
         "install %s, or remove the provider from \"%s\" in the services it consumes in its manifest", provider, id);
-    report_once(core, plugin, id, reach);
+    return report_once(core, plugin, id, reach);
 }
 
-void weivel_reach_check(weivel_core *core, weivel_plugin *plugin, const char *id, weivel_reach *reach) {
+weivel_status weivel_reach_check(weivel_core *core, weivel_plugin *plugin, const char *id, weivel_reach *reach) {
     memset(reach, 0, sizeof *reach);
+    if (plugin->is_host) {
+        return WEIVEL_STATUS_OK;
+    }
     const weivel_declaration *declaration = weivel_table_find_text(plugin->declared, id);
     if (declaration == NULL) {
-        refuse_undeclared(core, plugin, id, reach);
-        return;
+        return refuse_undeclared(core, plugin, id, reach);
     }
     reach->provider = declaration->provider;
     reach->wanted = declaration->wanted;
     const weivel_slot *slot = weivel_registry_find(core->registry, id);
     const weivel_registration *owner = slot == NULL ? NULL : slot->registration;
     if (owner != NULL && !weivel_registry_accepts(reach->provider, owner)) {
-        weivel_reach_refuse_provider(core, plugin, id, reach->provider, weivel_registry_owner_name(owner), reach);
-        return;
+        return weivel_reach_refuse_provider(core, plugin, id, reach->provider, weivel_registry_owner_name(owner),
+                                            reach);
     }
     reach->late = plugin->state != WEIVEL_PLUGIN_OPEN;
+    return WEIVEL_STATUS_OK;
 }
 
 static void log_late(weivel_core *core, const weivel_plugin *plugin, const char *what, const char *noun,
@@ -120,18 +155,18 @@ void weivel_reach_log_late_capability(weivel_core *core, const weivel_plugin *pl
     log_late(core, plugin, what, "capability", id);
 }
 
-bool weivel_reach_capability(weivel_core *core, weivel_plugin *plugin, const char *id) {
-    if (weivel_table_find_text(plugin->capabilities_reachable, id) != NULL) {
-        return true;
+weivel_status weivel_reach_capability(weivel_core *core, weivel_plugin *plugin, const char *id) {
+    if (plugin->is_host || weivel_table_find_text(plugin->capabilities_reachable, id) != NULL) {
+        return WEIVEL_STATUS_OK;
     }
     weivel_reach reach;
     memset(&reach, 0, sizeof reach);
     reach.code = WEIVEL_REFUSAL_UNDECLARED;
     reach.detail = weivel_text_format("reached for capability \"%s\", which it does not declare", id);
     reach.fix = weivel_text_format("add \"%s\" to the capabilities it consumes in its manifest", id);
-    report_kind_once(core, plugin, WEIVEL_REACH_CAPABILITY, id, &reach);
+    weivel_status status = report_kind_once(core, plugin, WEIVEL_REACH_CAPABILITY, id, &reach);
     weivel_reach_dispose(&reach);
-    return false;
+    return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_REFUSED : status;
 }
 
 void weivel_reach_stopped(const char *id, weivel_reach *reach) {

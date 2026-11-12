@@ -349,17 +349,28 @@ static void a_released_name_can_be_registered_again(void) {
     weivel_core_destroy(core);
 }
 
-static void a_plugin_never_opened_is_named_by_its_identity_when_late(void) {
+/** Stopping a plugin never opened does not open it: its gets and watches are still refused as never opened. */
+static void a_plugin_never_opened_stays_fenced_when_stopped(void) {
     weivel_core *core = core_knowing(NULL, 0);
-    plugin_spec spec = {"forge:3", "calendar", {"calendar:events"}, {NULL}, {NULL}};
-    weivel_handle plugin = register_spec(core, &spec);
-    CHECK(weivel_quarantine_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
+    plugin_spec quarantined_spec = {"forge:3", "calendar", {"calendar:events"}, {NULL}, {NULL}};
+    plugin_spec released_spec = {"forge:4", "notes", {"calendar:events"}, {NULL}, {NULL}};
+    weivel_handle quarantined = register_spec(core, &quarantined_spec);
+    weivel_handle released = register_spec(core, &released_spec);
+    register_service(core, WEIVEL_HOST, "calendar:events");
+    CHECK(weivel_quarantine_plugin(core, quarantined, NULL, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_release_plugin(core, released, NULL) == WEIVEL_STATUS_OK);
     forget(core);
     weivel_handle watch = 1;
-    CHECK(weivel_watch_service(core, plugin, "calendar:events", &watch, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_watch_service(core, quarantined, "calendar:events", &watch, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(watch == 0);
+    weivel_handle got = 1;
+    CHECK(weivel_get_service(core, released, "calendar:events", &got, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(got == 0);
     drain(core);
-    check_text(nth_of(WEIVEL_EVENT_LOG, 0)->detail,
-               "ignored a late watch of service \"calendar:events\" from forge:3, which is no longer running", "log");
+    CHECK(count_kind(WEIVEL_EVENT_REFUSAL) == 2 && count_kind(WEIVEL_EVENT_LOG) == 0);
+    CHECK(nth_of(WEIVEL_EVENT_REFUSAL, 0)->code == WEIVEL_REFUSAL_PLUGIN_STATE);
+    check_text(nth_of(WEIVEL_EVENT_REFUSAL, 0)->detail, "the plugin \"calendar\" has not been opened", "detail");
+    check_text(nth_of(WEIVEL_EVENT_REFUSAL, 1)->detail, "the plugin \"notes\" has not been opened", "detail");
     weivel_core_destroy(core);
 }
 
@@ -851,7 +862,7 @@ int main(void) {
     a_quarantined_plugin_keeps_its_name_and_reopens();
     a_released_name_can_be_registered_again();
     a_plugin_must_be_opened_before_it_reaches();
-    a_plugin_never_opened_is_named_by_its_identity_when_late();
+    a_plugin_never_opened_stays_fenced_when_stopped();
     an_identity_is_held_by_one_plugin();
     a_reopened_plugin_keeps_the_identity_consumers_bind_to();
     a_manifest_of_the_previous_size_is_named_by_its_import_name();

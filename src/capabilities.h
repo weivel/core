@@ -56,6 +56,9 @@ typedef struct weivel_capabilities {
     weivel_table *by_id;
     weivel_link all;
     weivel_table *holdings;
+    /** Holdings allocated ahead, chained by `by_provision`, each with its revocation reserved. */
+    weivel_link spare_holdings;
+    uint32_t spare_holding_count;
     uint32_t holding_count;
     uint32_t count;
     uint32_t provision_count;
@@ -68,9 +71,22 @@ weivel_capabilities *weivel_capabilities_create(void);
 void weivel_capabilities_destroy(weivel_capabilities *capabilities);
 
 /**
+ * Allocates `count` holdings ahead, each reserving the revocation it will owe, so the next `count` holdings this
+ * call records cannot fail. On WEIVEL_STATUS_OUT_OF_MEMORY the call changes nothing.
+ */
+weivel_status weivel_capabilities_prepare_holdings(weivel_core *core, uint32_t count);
+
+/** Frees the holdings allocated ahead that no holding used, and gives back their reservations. */
+void weivel_capabilities_finish(weivel_core *core);
+
+/** How many notifications weivel_capabilities_strip can owe for the plugin, at most. */
+uint32_t weivel_capabilities_strip_notices(const weivel_plugin *plugin);
+
+/**
  * Takes every capability from a plugin: each implementation it provided is revoked to its holders and, when
  * verified, withdrawn to every watch of its capability, then its own capability watches stop, then what it holds is
- * revoked to it.
+ * revoked to it. The caller has reserved weivel_capabilities_strip_notices of notifications, so nothing in it can
+ * fail.
  */
 void weivel_capabilities_strip(weivel_core *core, weivel_plugin *plugin);
 

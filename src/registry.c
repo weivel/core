@@ -16,6 +16,7 @@ weivel_registry *weivel_registry_create(void) {
         return NULL;
     }
     weivel_list_init(&registry->all_slots);
+    weivel_list_init(&registry->spare_holdings);
     registry->slots = weivel_table_create();
     registry->holdings = weivel_table_create();
     if (registry->slots == NULL || registry->holdings == NULL) {
@@ -56,10 +57,23 @@ static void free_slot(weivel_slot *slot) {
     free(slot);
 }
 
+/** Frees every holding allocated ahead, answering how many there were. */
+static uint32_t free_spare_holdings(weivel_registry *registry) {
+    while (!weivel_list_empty(&registry->spare_holdings)) {
+        weivel_link *link = registry->spare_holdings.next;
+        weivel_list_remove(link);
+        free(WEIVEL_RECORD_OF(link, weivel_holding, by_registration));
+    }
+    uint32_t spares = registry->spare_holding_count;
+    registry->spare_holding_count = 0;
+    return spares;
+}
+
 void weivel_registry_destroy(weivel_registry *registry) {
     if (registry == NULL) {
         return;
     }
+    free_spare_holdings(registry);
     if (registry->slots != NULL) {
         while (!weivel_list_empty(&registry->all_slots)) {
             weivel_link *link = registry->all_slots.next;
@@ -130,35 +144,64 @@ static weivel_holding_key holding_key(const weivel_registration *registration, c
     return key;
 }
 
-weivel_status weivel_registry_hold(weivel_core *core, weivel_registration *registration, weivel_plugin *plugin) {
-    weivel_holding_key key = holding_key(registration, plugin);
-    if (weivel_table_find(core->registry->holdings, &key, sizeof key) != NULL) {
-        return WEIVEL_STATUS_OK;
-    }
-    if (core->registry->fail_next_holding) {
-        core->registry->fail_next_holding = false;
-        return WEIVEL_STATUS_OUT_OF_MEMORY;
-    }
+/** Allocates one holding ahead with its revocation reserved; nothing is made when memory runs out. */
+static weivel_status prepare_holding(weivel_core *core) {
+    weivel_registry *registry = core->registry;
     weivel_holding *holding = weivel_memory_allocate_zeroed(1, sizeof *holding);
     if (holding == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    holding->key = key;
-    holding->registration = registration;
-    holding->plugin = plugin;
-    if (weivel_table_add(core->registry->holdings, &holding->key, sizeof holding->key, holding) != WEIVEL_STATUS_OK) {
+    if (weivel_table_reserve(registry->holdings, 1) != WEIVEL_STATUS_OK ||
+        weivel_events_reserve(core->events, 1) != WEIVEL_STATUS_OK) {
         free(holding);
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
+    weivel_list_append(&registry->spare_holdings, &holding->by_registration);
+    registry->spare_holding_count++;
+    return WEIVEL_STATUS_OK;
+}
+
+weivel_status weivel_registry_prepare_holdings(weivel_core *core, uint32_t count) {
+    weivel_status status = WEIVEL_STATUS_OK;
+    for (uint32_t index = 0; status == WEIVEL_STATUS_OK && index < count; index++) {
+        status = prepare_holding(core);
+    }
+    return status;
+}
+
+void weivel_registry_finish(weivel_core *core) {
+    weivel_events_unreserve(core->events, free_spare_holdings(core->registry));
+    weivel_table_drop_spares(core->registry->holdings);
+}
+
+weivel_status weivel_registry_hold(weivel_core *core, weivel_registration *registration, weivel_plugin *plugin) {
+    weivel_registry *registry = core->registry;
+    weivel_holding_key key = holding_key(registration, plugin);
+    if (weivel_table_find(registry->holdings, &key, sizeof key) != NULL) {
+        return WEIVEL_STATUS_OK;
+    }
+    if (registry->spare_holding_count == 0 && prepare_holding(core) != WEIVEL_STATUS_OK) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    weivel_link *spare = registry->spare_holdings.next;
+    weivel_holding *holding = WEIVEL_RECORD_OF(spare, weivel_holding, by_registration);
+    holding->key = key;
+    if (weivel_table_add(registry->holdings, &holding->key, sizeof holding->key, holding) != WEIVEL_STATUS_OK) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    weivel_list_remove(spare);
+    registry->spare_holding_count--;
+    holding->registration = registration;
+    holding->plugin = plugin;
     weivel_list_append(&registration->holdings, &holding->by_registration);
     weivel_list_append(&plugin->holdings, &holding->by_plugin);
-    core->registry->holding_count++;
+    registry->holding_count++;
     return WEIVEL_STATUS_OK;
 }
 
 static void revoke_holding(weivel_core *core, weivel_holding *holding) {
     weivel_revoked_event revoked = {holding->plugin->handle, holding->registration->handle};
-    weivel_events_push_revoked(core->events, &revoked);
+    weivel_events_deliver_revoked(core->events, &revoked);
     weivel_table_remove(core->registry->holdings, &holding->key, sizeof holding->key);
     weivel_list_remove(&holding->by_registration);
     weivel_list_remove(&holding->by_plugin);
@@ -174,6 +217,14 @@ static void log_unheld(weivel_core *core, const char *id) {
     free(text);
 }
 
+uint32_t weivel_registry_watchers(const weivel_slot *slot) {
+    uint32_t count = 0;
+    for (const weivel_link *link = slot->watchers.next; link != &slot->watchers; link = link->next) {
+        count++;
+    }
+    return count;
+}
+
 static void tell_watchers(weivel_core *core, weivel_registration *registration, uint32_t change) {
     weivel_link *head = &registration->slot->watchers;
     for (weivel_link *link = head->next; link != head; link = link->next) {
@@ -187,11 +238,12 @@ static void tell_watchers(weivel_core *core, weivel_registration *registration, 
             continue;
         }
         weivel_watch_event heard = {watch->handle, watch->consumer->handle, registration->handle, change};
-        weivel_events_push_watch(core->events, &heard);
+        weivel_core_notify_watch(core, &heard);
     }
 }
 
-void weivel_registry_unregister(weivel_core *core, weivel_registration *registration) {
+/** Ends a registration as weivel_registry_unregister does, but keeps its slot, which another is about to fill. */
+static void unregister_in_place(weivel_core *core, weivel_registration *registration) {
     registration->slot->registration = NULL;
     weivel_list_remove(&registration->by_owner);
     while (!weivel_list_empty(&registration->holdings)) {
@@ -199,8 +251,12 @@ void weivel_registry_unregister(weivel_core *core, weivel_registration *registra
     }
     tell_watchers(core, registration, WEIVEL_CHANGE_UNREGISTERED);
     weivel_handles_release(core->handles, registration->handle, WEIVEL_RECORD_REGISTRATION);
-    weivel_slot *slot = registration->slot;
     free(registration);
+}
+
+void weivel_registry_unregister(weivel_core *core, weivel_registration *registration) {
+    weivel_slot *slot = registration->slot;
+    unregister_in_place(core, registration);
     weivel_registry_release_slot(core->registry, slot);
 }
 
@@ -210,7 +266,16 @@ static void stop_watch(weivel_core *core, weivel_watch *watch) {
     weivel_handles_release(core->handles, watch->handle, WEIVEL_RECORD_WATCH);
     weivel_slot *slot = watch->slot;
     free(watch);
+    core->registry->watch_count--;
     weivel_registry_release_slot(core->registry, slot);
+}
+
+uint32_t weivel_registry_strip_notices(const weivel_plugin *plugin) {
+    uint32_t count = 0;
+    for (const weivel_link *link = plugin->registrations.next; link != &plugin->registrations; link = link->next) {
+        count += weivel_registry_watchers(WEIVEL_RECORD_OF(link, weivel_registration, by_owner)->slot);
+    }
+    return count;
 }
 
 void weivel_registry_strip(weivel_core *core, weivel_plugin *plugin) {
@@ -293,8 +358,8 @@ static weivel_status refuse_namespace(weivel_core *core, const weivel_plugin *pl
                               : weivel_text_format("register it as \"%s:%s\", or as one of the well-known ids: %s",
                                                    plugin->manifest.value.import_name, name, known);
     weivel_status status = WEIVEL_STATUS_OUT_OF_MEMORY;
-    if (detail != NULL && fix != NULL) {
-        weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_OUTSIDE_NAMESPACE, detail, fix);
+    if (detail != NULL && fix != NULL &&
+        weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_OUTSIDE_NAMESPACE, detail, fix) == WEIVEL_STATUS_OK) {
         status = WEIVEL_STATUS_REFUSED;
     }
     free(fix);
@@ -309,10 +374,11 @@ static weivel_status refuse_taken(weivel_core *core, const weivel_registration *
     if (detail == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_SERVICE_TAKEN, detail,
-                               "disable one of the two plugins, or have each register its own namespaced id");
+    weivel_status status = weivel_events_push_refusal(
+        core->events, WEIVEL_REFUSAL_SERVICE_TAKEN, detail,
+        "disable one of the two plugins, or have each register its own namespaced id");
     free(detail);
-    return WEIVEL_STATUS_REFUSED;
+    return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_REFUSED : status;
 }
 
 /** What a plugin's manifest advertises for an id it provides, NULL when it advertises nothing for it. */
@@ -324,23 +390,59 @@ static const weivel_numbers *advertised_by(const weivel_plugin *owner, const cha
     return &declaration->offered->attributes;
 }
 
-static weivel_status add_registration(weivel_core *core, weivel_plugin *owner, weivel_slot *slot,
-                                      weivel_handle *handle) {
+/** A registration of `slot` for `owner`, with its handle, linked nowhere yet; NULL when memory runs out. */
+static weivel_registration *new_registration(weivel_core *core, weivel_plugin *owner, weivel_slot *slot) {
     weivel_registration *registration = weivel_memory_allocate_zeroed(1, sizeof *registration);
     if (registration == NULL) {
-        return WEIVEL_STATUS_OUT_OF_MEMORY;
+        return NULL;
     }
-    weivel_status status =
-        weivel_handles_allocate(core->handles, WEIVEL_RECORD_REGISTRATION, registration, &registration->handle);
-    if (status != WEIVEL_STATUS_OK) {
+    if (weivel_handles_allocate(core->handles, WEIVEL_RECORD_REGISTRATION, registration, &registration->handle) !=
+        WEIVEL_STATUS_OK) {
         free(registration);
-        return status;
+        return NULL;
     }
     registration->slot = slot;
     registration->owner = owner;
     registration->advertised = advertised_by(owner, slot->id);
     weivel_list_init(&registration->holdings);
     weivel_list_init(&registration->by_owner);
+    return registration;
+}
+
+/**
+ * Makes ready everything the arrival of `registration` will owe, before anything changes: a holding for every want
+ * that may settle and every watch that may hear it, a notification for every watch, twice when it replaces one, and
+ * the report of every want bound to another provider. On failure the call changes nothing.
+ */
+static weivel_status prepare_arrival(weivel_core *core, weivel_slot *slot, const weivel_registration *registration,
+                                     bool replacing) {
+    uint32_t watchers = weivel_registry_watchers(slot);
+    weivel_status status = weivel_registry_prepare_holdings(core, weivel_waiting_count(slot) + watchers);
+    if (status == WEIVEL_STATUS_OK) {
+        status = weivel_core_reserve_notices(core, replacing ? 2 * watchers : watchers);
+    }
+    if (status == WEIVEL_STATUS_OK) {
+        status = weivel_waiting_report_mismatches(core, slot, registration);
+    }
+    return status;
+}
+
+static weivel_status register_in_slot(weivel_core *core, weivel_plugin *owner, weivel_slot *slot,
+                                      weivel_handle *handle) {
+    weivel_registration *replaced = slot->registration;
+    weivel_registration *registration = new_registration(core, owner, slot);
+    if (registration == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    weivel_status status = prepare_arrival(core, slot, registration, replaced != NULL);
+    if (status != WEIVEL_STATUS_OK) {
+        weivel_handles_unissue(core->handles, registration->handle, WEIVEL_RECORD_REGISTRATION);
+        free(registration);
+        return status;
+    }
+    if (replaced != NULL) {
+        unregister_in_place(core, replaced);
+    }
     if (owner != NULL) {
         weivel_list_append(&owner->registrations, &registration->by_owner);
     }
@@ -351,25 +453,16 @@ static weivel_status add_registration(weivel_core *core, weivel_plugin *owner, w
     return WEIVEL_STATUS_OK;
 }
 
-static weivel_status register_in_slot(weivel_core *core, weivel_plugin *owner, const char *id,
-                                      weivel_handle *handle) {
+static weivel_status register_for_host(weivel_core *core, const char *id, weivel_handle *handle) {
     weivel_slot *slot = weivel_registry_slot(core->registry, id);
     if (slot == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_status status = add_registration(core, owner, slot, handle);
+    weivel_status status = register_in_slot(core, NULL, slot, handle);
     if (status != WEIVEL_STATUS_OK) {
         weivel_registry_release_slot(core->registry, slot);
     }
     return status;
-}
-
-static weivel_status register_for_host(weivel_core *core, const char *id, weivel_handle *handle) {
-    weivel_slot *held = weivel_registry_find(core->registry, id);
-    if (held != NULL && held->registration != NULL) {
-        weivel_registry_unregister(core, held->registration);
-    }
-    return register_in_slot(core, NULL, id, handle);
 }
 
 static weivel_status register_for_plugin(weivel_core *core, weivel_handle owner, const char *id,
@@ -390,9 +483,18 @@ static weivel_status register_for_plugin(weivel_core *core, weivel_handle owner,
     if (held != NULL && held->registration != NULL) {
         return refuse_taken(core, held->registration);
     }
-    status = register_in_slot(core, plugin, id, handle);
+    weivel_slot *slot = weivel_registry_slot(core->registry, id);
+    if (slot == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    bool noted;
+    status = weivel_ledger_note(plugin, WEIVEL_RELATIONSHIP_SERVICE_PROVIDED, id, &noted);
     if (status == WEIVEL_STATUS_OK) {
-        weivel_ledger_note(core, plugin, WEIVEL_RELATIONSHIP_SERVICE_PROVIDED, id);
+        status = register_in_slot(core, plugin, slot, handle);
+    }
+    if (status != WEIVEL_STATUS_OK) {
+        weivel_ledger_unnote(plugin, WEIVEL_RELATIONSHIP_SERVICE_PROVIDED, noted);
+        weivel_registry_release_slot(core->registry, slot);
     }
     return status;
 }
@@ -420,7 +522,7 @@ weivel_status weivel_register_service(weivel_core *core, weivel_handle owner, co
         status = owner == WEIVEL_HOST ? register_for_host(core, id, registration)
                                       : register_for_plugin(core, owner, id, registration);
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
@@ -429,16 +531,21 @@ static weivel_status refuse_stale(weivel_core *core, weivel_handle handle) {
     char detail[128];
     snprintf(detail, sizeof detail, "the handle %" PRIu64 " names no registration, watch or want on this core",
              handle);
-    weivel_events_push_refusal(
+    weivel_status status = weivel_events_push_refusal(
         core->events, WEIVEL_REFUSAL_STALE_HANDLE, detail,
         "pass a handle a registration, a watch or a want answered, and only until what it names has ended");
-    return WEIVEL_STATUS_REFUSED;
+    return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_REFUSED : status;
 }
 
 static weivel_status end_handle(weivel_core *core, weivel_handle handle) {
     void *record;
     if (weivel_handles_resolve(core->handles, handle, WEIVEL_RECORD_REGISTRATION, &record) == WEIVEL_STATUS_OK) {
-        weivel_registry_unregister(core, record);
+        weivel_registration *registration = record;
+        weivel_status status = weivel_core_reserve_notices(core, weivel_registry_watchers(registration->slot));
+        if (status != WEIVEL_STATUS_OK) {
+            return status;
+        }
+        weivel_registry_unregister(core, registration);
     } else if (weivel_handles_resolve(core->handles, handle, WEIVEL_RECORD_WATCH, &record) == WEIVEL_STATUS_OK) {
         stop_watch(core, record);
     } else if (weivel_handles_resolve(core->handles, handle, WEIVEL_RECORD_WANT, &record) == WEIVEL_STATUS_OK) {
@@ -455,31 +562,39 @@ weivel_status weivel_unregister(weivel_core *core, weivel_handle handle, uint32_
     }
     weivel_mutex_lock(core->mutex);
     weivel_status status = end_handle(core, handle);
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
 
 /** Checks reach for an attempt that needs no refusal texts, since the check reported them already. */
-static weivel_reach reach_without_texts(weivel_core *core, weivel_plugin *plugin, const char *id) {
-    weivel_reach reach;
-    weivel_reach_check(core, plugin, id, &reach);
-    weivel_reach_dispose(&reach);
-    return reach;
+static weivel_status reach_without_texts(weivel_core *core, weivel_plugin *plugin, const char *id,
+                                         weivel_reach *reach) {
+    weivel_status status = weivel_reach_check(core, plugin, id, reach);
+    weivel_reach_dispose(reach);
+    return status;
 }
 
 static weivel_status get_service(weivel_core *core, weivel_handle consumer, const char *id,
                                  weivel_handle *implementation) {
     weivel_plugin *plugin;
-    weivel_status status = weivel_core_opened_plugin(core, consumer, &plugin);
+    weivel_status status = weivel_core_asking_plugin(core, consumer, &plugin);
     if (status != WEIVEL_STATUS_OK) {
         return status;
     }
-    weivel_reach reach = reach_without_texts(core, plugin, id);
+    weivel_reach reach;
+    status = reach_without_texts(core, plugin, id, &reach);
+    if (status != WEIVEL_STATUS_OK) {
+        return status;
+    }
     if (reach.code != WEIVEL_REFUSAL_NONE) {
         return WEIVEL_STATUS_REFUSED;
     }
-    weivel_ledger_note(core, plugin, WEIVEL_RELATIONSHIP_SERVICE_CONSUMED, id);
+    bool noted;
+    status = weivel_ledger_note(plugin, WEIVEL_RELATIONSHIP_SERVICE_CONSUMED, id, &noted);
+    if (status != WEIVEL_STATUS_OK) {
+        return status;
+    }
     weivel_slot *slot = weivel_registry_find(core->registry, id);
     if (slot == NULL || slot->registration == NULL) {
         return WEIVEL_STATUS_NONE;
@@ -487,6 +602,8 @@ static weivel_status get_service(weivel_core *core, weivel_handle consumer, cons
     status = weivel_registry_hold(core, slot->registration, plugin);
     if (status == WEIVEL_STATUS_OK) {
         *implementation = slot->registration->handle;
+    } else {
+        weivel_ledger_unnote(plugin, WEIVEL_RELATIONSHIP_SERVICE_CONSUMED, noted);
     }
     return status;
 }
@@ -509,7 +626,7 @@ weivel_status weivel_get_service(weivel_core *core, weivel_handle plugin, const 
         *implementation = 0;
         status = get_service(core, plugin, id, implementation);
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
@@ -534,17 +651,22 @@ static weivel_status add_watch(weivel_core *core, weivel_plugin *plugin, const c
     watch->provider = provider;
     weivel_list_append(&slot->watchers, &watch->by_slot);
     weivel_list_append(&plugin->watches, &watch->by_consumer);
+    core->registry->watch_count++;
     *handle = watch->handle;
     return WEIVEL_STATUS_OK;
 }
 
 static weivel_status watch_service(weivel_core *core, weivel_handle consumer, const char *id, weivel_handle *handle) {
     weivel_plugin *plugin;
-    weivel_status status = weivel_core_opened_plugin(core, consumer, &plugin);
+    weivel_status status = weivel_core_asking_plugin(core, consumer, &plugin);
     if (status != WEIVEL_STATUS_OK) {
         return status;
     }
-    weivel_reach reach = reach_without_texts(core, plugin, id);
+    weivel_reach reach;
+    status = reach_without_texts(core, plugin, id, &reach);
+    if (status != WEIVEL_STATUS_OK) {
+        return status;
+    }
     if (reach.code != WEIVEL_REFUSAL_NONE) {
         return WEIVEL_STATUS_REFUSED;
     }
@@ -552,9 +674,13 @@ static weivel_status watch_service(weivel_core *core, weivel_handle consumer, co
         weivel_reach_log_late(core, plugin, "watch", id);
         return WEIVEL_STATUS_REFUSED;
     }
-    status = add_watch(core, plugin, id, reach.provider, handle);
+    bool noted;
+    status = weivel_ledger_note(plugin, WEIVEL_RELATIONSHIP_SERVICE_CONSUMED, id, &noted);
     if (status == WEIVEL_STATUS_OK) {
-        weivel_ledger_note(core, plugin, WEIVEL_RELATIONSHIP_SERVICE_CONSUMED, id);
+        status = add_watch(core, plugin, id, reach.provider, handle);
+    }
+    if (status != WEIVEL_STATUS_OK) {
+        weivel_ledger_unnote(plugin, WEIVEL_RELATIONSHIP_SERVICE_CONSUMED, noted);
     }
     return status;
 }
@@ -577,7 +703,7 @@ weivel_status weivel_watch_service(weivel_core *core, weivel_handle plugin, cons
         *watch = 0;
         status = watch_service(core, plugin, id, watch);
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
@@ -677,7 +803,7 @@ static weivel_status list_call(weivel_core *core, weivel_handle plugin, weivel_s
     }
     weivel_mutex_lock(core->mutex);
     weivel_status status = answer_list(core, plugin, list, unbound);
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
