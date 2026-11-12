@@ -35,7 +35,7 @@ static void malformed_calls_are_answered_not_crashed(void) {
     CHECK(weivel_core_create(NULL, NULL, NULL) == WEIVEL_STATUS_MALFORMED);
     CHECK(weivel_core_create(&too_small, &core, NULL) == WEIVEL_STATUS_MALFORMED);
     CHECK(core == NULL);
-    CHECK(weivel_core_destroy(NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_core_destroy(NULL) == WEIVEL_STATUS_OK);
     CHECK(weivel_next_event(NULL, &event, NULL) == WEIVEL_STATUS_MALFORMED);
     CHECK(weivel_event_release(NULL) == WEIVEL_STATUS_MALFORMED);
     CHECK(weivel_next_deadline(NULL, &deadline, NULL) == WEIVEL_STATUS_MALFORMED);
@@ -44,6 +44,16 @@ static void malformed_calls_are_answered_not_crashed(void) {
     weivel_event small_event = WEIVEL_INIT(weivel_event);
     small_event.size = 8;
     CHECK(weivel_event_release(&small_event) == WEIVEL_STATUS_MALFORMED);
+    weivel_event zeroed;
+    memset(&zeroed, 0, sizeof zeroed);
+    CHECK(weivel_event_release(&zeroed) == WEIVEL_STATUS_OK);
+
+    weivel_core_options too_large = WEIVEL_INIT(weivel_core_options);
+    too_large.initial_event_capacity = WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY + 1;
+    CHECK(weivel_core_create(&too_large, &core, NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(core == NULL);
+    too_large.initial_event_capacity = WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY;
+    CHECK(weivel_core_create(&too_large, &core, NULL) == WEIVEL_STATUS_OK);
     weivel_core_destroy(core);
 }
 
@@ -64,6 +74,33 @@ static void a_malformed_call_on_a_core_queues_its_refusal(void) {
     CHECK(strlen(event.data.refusal.fix) > 0);
     weivel_event_release(&event);
     drain_and_release(core);
+    weivel_core_destroy(core);
+}
+
+static void an_unreleased_event_is_never_overwritten(void) {
+    weivel_core *core = create_core(WEIVEL_LOG_DEFAULT);
+    weivel_event held = WEIVEL_INIT(weivel_event);
+    uint32_t pending = 0;
+
+    weivel_next_deadline(core, NULL, NULL);
+    weivel_next_event(core, NULL, NULL);
+    CHECK(weivel_next_event(core, &held, &pending) == WEIVEL_STATUS_OK);
+    void *held_storage = held.storage;
+    const char *held_detail = held.data.refusal.detail;
+
+    CHECK(weivel_next_event(core, &held, &pending) == WEIVEL_STATUS_MALFORMED);
+    CHECK(pending == 2);
+    CHECK(held.storage == held_storage);
+    CHECK(held.data.refusal.detail == held_detail);
+    CHECK(strstr(held.data.refusal.detail, "weivel_next_deadline") != NULL);
+
+    CHECK(weivel_event_release(&held) == WEIVEL_STATUS_OK);
+    CHECK(weivel_next_event(core, &held, &pending) == WEIVEL_STATUS_OK);
+    CHECK(strstr(held.data.refusal.detail, "weivel_next_event") != NULL);
+    weivel_event_release(&held);
+    CHECK(weivel_next_event(core, &held, &pending) == WEIVEL_STATUS_OK);
+    CHECK(strstr(held.data.refusal.detail, "still holding") != NULL);
+    weivel_event_release(&held);
     weivel_core_destroy(core);
 }
 
@@ -162,6 +199,7 @@ int main(void) {
     a_core_is_created_and_destroyed();
     malformed_calls_are_answered_not_crashed();
     a_malformed_call_on_a_core_queues_its_refusal();
+    an_unreleased_event_is_never_overwritten();
     events_drain_once_in_order_and_their_strings_outlive_later_calls();
     with_nothing_pending_there_is_no_deadline();
     advancing_before_a_deadline_settles_nothing();

@@ -71,6 +71,9 @@ weivel_status weivel_core_create(const weivel_core_options *options, weivel_core
         return WEIVEL_STATUS_MALFORMED;
     }
     weivel_core_options resolved = resolve_options(options);
+    if (resolved.initial_event_capacity > WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY) {
+        return WEIVEL_STATUS_MALFORMED;
+    }
     weivel_core *created = allocate_core(&resolved);
     if (created == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
@@ -82,10 +85,9 @@ weivel_status weivel_core_create(const weivel_core_options *options, weivel_core
 }
 
 weivel_status weivel_core_destroy(weivel_core *core) {
-    if (core == NULL) {
-        return WEIVEL_STATUS_MALFORMED;
+    if (core != NULL) {
+        free_core(core);
     }
-    free_core(core);
     return WEIVEL_STATUS_OK;
 }
 
@@ -109,6 +111,9 @@ weivel_status weivel_next_event(weivel_core *core, weivel_event *event, uint32_t
     if (!is_sized_event(event)) {
         status = refuse_malformed(core, "weivel_next_event was given no event struct, or one whose size is too small",
                                   "pass a weivel_event initialised with WEIVEL_INIT(weivel_event)");
+    } else if (event->kind != WEIVEL_EVENT_NONE) {
+        status = refuse_malformed(core, "weivel_next_event was given an event still holding one",
+                                  "pass the held event to weivel_event_release first");
     } else {
         weivel_event taken = no_event();
         status = weivel_events_pop(core->events, &taken) ? WEIVEL_STATUS_OK : WEIVEL_STATUS_NONE;
@@ -119,7 +124,14 @@ weivel_status weivel_next_event(weivel_core *core, weivel_event *event, uint32_t
     return status;
 }
 
+static bool is_zero_sized_event(const weivel_event *event) {
+    return event != NULL && event->size == 0;
+}
+
 weivel_status weivel_event_release(weivel_event *event) {
+    if (is_zero_sized_event(event)) {
+        return WEIVEL_STATUS_OK;
+    }
     if (!is_sized_event(event)) {
         return WEIVEL_STATUS_MALFORMED;
     }

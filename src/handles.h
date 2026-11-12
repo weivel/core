@@ -25,6 +25,13 @@ weivel_status weivel_handles_resolve(const weivel_handles *handles, weivel_handl
 weivel_status weivel_handles_release(weivel_handles *handles, weivel_handle handle, uint32_t kind);
 
 /**
+ * Moves a live handle's slot to `generation` and answers the handle that now names it, or 0 when `handle` is not
+ * live. @implNote Exists so a test can reach a slot's last generation without four billion releases.
+ */
+weivel_handle weivel_handles_set_generation(weivel_handles *handles, weivel_handle handle, uint32_t kind,
+                                            uint32_t generation);
+
+/**
  * The generation a slot moves to when released, or 0 when the slot must be retired.
  * @implNote Wrapping back to 1 would let a handle four billion releases old resolve again, so a slot that reaches
  * the last generation is never reused.

@@ -8,7 +8,7 @@ if(word_count EQUAL 0)
 endif()
 
 file(GLOB_RECURSE files "${SOURCE_ROOT}/include/*" "${SOURCE_ROOT}/src/*" "${SOURCE_ROOT}/test/*")
-list(APPEND files "${SOURCE_ROOT}/CONTENT.md")
+list(APPEND files "${SOURCE_ROOT}/CONTENT.md" "${SOURCE_ROOT}/CMakeLists.txt")
 get_filename_component(word_list "${WORDS}" ABSOLUTE)
 list(REMOVE_ITEM files "${word_list}")
 

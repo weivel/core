@@ -126,3 +126,13 @@ weivel_status weivel_handles_release(weivel_handles *handles, weivel_handle hand
     }
     return WEIVEL_STATUS_OK;
 }
+
+weivel_handle weivel_handles_set_generation(weivel_handles *handles, weivel_handle handle, uint32_t kind,
+                                            uint32_t generation) {
+    handle_slot *entry = live_slot(handles, handle, kind);
+    if (entry == NULL || generation == 0) {
+        return 0;
+    }
+    entry->generation = generation;
+    return handle_for(slot_of(handle), generation);
+}

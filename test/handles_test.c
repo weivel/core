@@ -81,7 +81,36 @@ static void a_slot_at_its_last_generation_is_retired(void) {
     CHECK(weivel_handles_next_generation(UINT32_MAX) == 0);
 }
 
+static void a_handle_released_at_the_last_generation_retires_its_slot(void) {
+    weivel_handles *handles = weivel_handles_create();
+    int value = 0;
+    void *record = NULL;
+    weivel_handle issued = 0;
+
+    CHECK(weivel_handles_allocate(handles, RECORD_KIND, &value, &issued) == WEIVEL_STATUS_OK);
+    uint32_t retired_slot = (uint32_t)(issued & 0xffffffffu);
+    weivel_handle last = weivel_handles_set_generation(handles, issued, RECORD_KIND, UINT32_MAX);
+    CHECK(last == (((weivel_handle)UINT32_MAX << 32) | retired_slot));
+    CHECK(weivel_handles_resolve(handles, issued, RECORD_KIND, &record) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_handles_release(handles, last, RECORD_KIND) == WEIVEL_STATUS_OK);
+    CHECK(weivel_handles_resolve(handles, last, RECORD_KIND, &record) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_handles_resolve(handles, (weivel_handle)retired_slot, RECORD_KIND, &record) == WEIVEL_STATUS_REFUSED);
+
+    for (int index = 0; index < 100; index++) {
+        weivel_handle handle = 0;
+        CHECK(weivel_handles_allocate(handles, RECORD_KIND, &value, &handle) == WEIVEL_STATUS_OK);
+        CHECK(handle != 0);
+        CHECK((uint32_t)(handle & 0xffffffffu) != retired_slot);
+        if (index % 2 == 0) {
+            CHECK(weivel_handles_release(handles, handle, RECORD_KIND) == WEIVEL_STATUS_OK);
+        }
+    }
+    CHECK(weivel_handles_release(handles, last, RECORD_KIND) == WEIVEL_STATUS_REFUSED);
+    weivel_handles_destroy(handles);
+}
+
 int main(void) {
+    a_handle_released_at_the_last_generation_retires_its_slot();
     a_released_handle_is_refused_after_its_slot_is_reused();
     handle_zero_is_never_issued_and_always_refused();
     a_handle_never_issued_or_of_another_kind_is_refused();
