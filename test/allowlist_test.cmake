@@ -18,11 +18,13 @@ set(allowed_from_msvc_buffer_security_check __security_check_cookie __security_c
 set(allowed_from_msvc_floating_point_marker _fltused)
 set(allowed_from_the_stack_protector __stack_chk_fail __stack_chk_guard)
 set(allowed_from_fortified_allowed_calls __memcpy_chk __memmove_chk __memset_chk __snprintf_chk)
+# Apple clang emits __vsnprintf_chk for vsnprintf, seen on the macOS runner.
+set(allowed_from_apple_fortified_vsnprintf __vsnprintf_chk)
 set(allowed_from_the_toolchain
     ${allowed_from_msvc_inline_snprintf} ${allowed_from_msvc_debug_runtime_checks}
     ${allowed_from_msvc_buffer_security_check} ${allowed_from_msvc_floating_point_marker}
     ${allowed_from_the_stack_protector}
-    ${allowed_from_fortified_allowed_calls})
+    ${allowed_from_fortified_allowed_calls} ${allowed_from_apple_fortified_vsnprintf})
 
 set(allowed_in_the_mutex_only
     InitializeSRWLock AcquireSRWLockExclusive ReleaseSRWLockExclusive
