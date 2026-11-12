@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "core_internal.h"
 #include "memory.h"
 #include "registry_support.h"
@@ -122,7 +124,7 @@ static void lists_each_plugin_in_registration_order_with_what_it_declared(void) 
         CHECK(other->plugin == second);
         check_text(other->identity, "notes", "identity defaults to the import name");
     }
-    CHECK(weivel_ledger_release(&snapshot) == WEIVEL_STATUS_OK);
+    CHECK(weivel_ledger_snapshot_release(&snapshot) == WEIVEL_STATUS_OK);
     CHECK(snapshot.storage == NULL && snapshot.rows == NULL && snapshot.row_count == 0);
     weivel_core_destroy(core);
 }
@@ -336,7 +338,7 @@ static void a_forgotten_plugin_is_gone_from_the_ledger(void) {
     weivel_ledger_snapshot snapshot = snapshot_of(core);
     CHECK(snapshot.row_count == 3);
     CHECK(snapshot.refusal_count == 2);
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
 
     forget(core);
     CHECK(weivel_forget_plugin(core, a, NULL) == WEIVEL_STATUS_OK);
@@ -351,7 +353,7 @@ static void a_forgotten_plugin_is_gone_from_the_ledger(void) {
         CHECK(refusal_at(&snapshot, 0)->plugin == c);
         check_text(refusal_at(&snapshot, 0)->id, "nowhere:y", "the remaining refusal");
     }
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
 
     weivel_ledger_row row = WEIVEL_INIT(weivel_ledger_row);
     CHECK(weivel_ledger_entry(core, a, &row, NULL) == WEIVEL_STATUS_REFUSED);
@@ -371,7 +373,7 @@ static void lists_refusals_in_the_order_they_were_reported(void) {
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
     CHECK(weivel_get_service(core, a, "z:one", &got, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(weivel_get_service(core, b, "z:two", &got, NULL) == WEIVEL_STATUS_REFUSED);
-    CHECK(weivel_capability_all(core, a, "z:one", &list, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_all_capabilities(core, a, "z:one", &list, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(weivel_get_service(core, a, "z:one", &got, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(weivel_get_service(core, b, "z:zero", &got, NULL) == WEIVEL_STATUS_REFUSED);
 
@@ -390,7 +392,7 @@ static void lists_refusals_in_the_order_they_were_reported(void) {
             check_text(refusal->id, ids[index], "refusal in report order");
         }
     }
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
     weivel_core_destroy(core);
 }
 
@@ -414,7 +416,7 @@ static void a_snapshot_outlives_the_changes_and_the_core(void) {
         check_strings(&row_at(&snapshot, 0)->services_consumed, consumed, "snapshot after destroy");
     }
     check_text(row.import_name, "notes", "row after destroy");
-    CHECK(weivel_ledger_release(&snapshot) == WEIVEL_STATUS_OK);
+    CHECK(weivel_ledger_snapshot_release(&snapshot) == WEIVEL_STATUS_OK);
     CHECK(weivel_ledger_row_release(&row) == WEIVEL_STATUS_OK);
 }
 
@@ -435,14 +437,14 @@ static void malformed_ledger_calls_are_answered_as_values(void) {
     CHECK(weivel_ledger(core, &snapshot, &pending) == WEIVEL_STATUS_OK);
     CHECK(snapshot.row_count == 0 && snapshot.rows == NULL && snapshot.storage != NULL);
     CHECK(weivel_ledger(core, &snapshot, NULL) == WEIVEL_STATUS_MALFORMED);
-    CHECK(weivel_ledger_release(&snapshot) == WEIVEL_STATUS_OK);
-    CHECK(weivel_ledger_release(&snapshot) == WEIVEL_STATUS_OK);
+    CHECK(weivel_ledger_snapshot_release(&snapshot) == WEIVEL_STATUS_OK);
+    CHECK(weivel_ledger_snapshot_release(&snapshot) == WEIVEL_STATUS_OK);
 
-    CHECK(weivel_ledger_release(NULL) == WEIVEL_STATUS_MALFORMED);
-    CHECK(weivel_ledger_release(&small) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_ledger_snapshot_release(NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_ledger_snapshot_release(&small) == WEIVEL_STATUS_MALFORMED);
     weivel_ledger_snapshot zero;
     memset(&zero, 0, sizeof zero);
-    CHECK(weivel_ledger_release(&zero) == WEIVEL_STATUS_OK);
+    CHECK(weivel_ledger_snapshot_release(&zero) == WEIVEL_STATUS_OK);
     CHECK(weivel_ledger_row_release(NULL) == WEIVEL_STATUS_MALFORMED);
     weivel_ledger_row zero_row;
     memset(&zero_row, 0, sizeof zero_row);
@@ -554,7 +556,83 @@ static void the_core_logs_at_every_level(void) {
     weivel_core_destroy(core);
 }
 
+/** A reported refusal says why: an undeclared reach, or a service bound to a provider another owner holds. */
+static void each_reported_refusal_carries_its_code(void) {
+    weivel_core *core = plain_core();
+    weivel_service_want want = WEIVEL_INIT(weivel_service_want);
+    want.id = "calendar:events";
+    want.provider = "elsewhere";
+    weivel_manifest manifest = WEIVEL_INIT(weivel_manifest);
+    manifest.import_name = "bound";
+    manifest.services.consumes.items = &want;
+    manifest.services.consumes.count = 1;
+    weivel_handle bound = 0;
+    CHECK(weivel_register_manifest(core, &manifest, &bound, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_open_plugin(core, bound, NULL, NULL) == WEIVEL_STATUS_OK);
+    weivel_handle registration = 0;
+    CHECK(weivel_register_service(core, WEIVEL_HOST, "calendar:events", &registration, NULL) == WEIVEL_STATUS_OK);
+    weivel_handle got = 0;
+    CHECK(weivel_get_service(core, bound, "undeclared:id", &got, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_get_service(core, bound, "calendar:events", &got, NULL) == WEIVEL_STATUS_REFUSED);
+    weivel_ledger_snapshot snapshot = snapshot_of(core);
+    CHECK(snapshot.refusal_count == 2);
+    if (snapshot.refusal_count == 2) {
+        CHECK(refusal_at(&snapshot, 0)->code == WEIVEL_REFUSAL_UNDECLARED);
+        check_text(refusal_at(&snapshot, 0)->id, "undeclared:id", "undeclared refusal");
+        CHECK(refusal_at(&snapshot, 1)->code == WEIVEL_REFUSAL_WRONG_PROVIDER);
+        check_text(refusal_at(&snapshot, 1)->id, "calendar:events", "provider refusal");
+    }
+    weivel_ledger_snapshot_release(&snapshot);
+    weivel_core_destroy(core);
+}
+
+/** The capabilities a plugin consumed, by `all` or by a watch its reach allowed, are a relationship like a service. */
+static void records_the_capabilities_each_activation_consumed(void) {
+    weivel_core *core = plain_core();
+    ledger_spec reader_spec = {.import_name = "reader", .capabilities_consumed = {"screens", "fonts"}};
+    weivel_handle reader = open_ledger_spec(core, &reader_spec);
+    weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
+    CHECK(weivel_all_capabilities(core, reader, "screens", &list, NULL) == WEIVEL_STATUS_OK);
+    weivel_capability_list_release(&list);
+    CHECK(weivel_all_capabilities(core, reader, "screens", &list, NULL) == WEIVEL_STATUS_OK);
+    weivel_capability_list_release(&list);
+    CHECK(weivel_all_capabilities(core, reader, "undeclared", &list, NULL) == WEIVEL_STATUS_REFUSED);
+    weivel_handle watch = 0;
+    CHECK(weivel_watch_capability(core, reader, "fonts", &watch, NULL) == WEIVEL_STATUS_OK);
+    weivel_ledger_snapshot snapshot = snapshot_of(core);
+    CHECK(snapshot.row_count == 1);
+    const char *const consumed[] = {"screens", "fonts", NULL};
+    if (snapshot.row_count == 1) {
+        check_strings(&row_at(&snapshot, 0)->capabilities_consumed, consumed, "capabilities consumed");
+    }
+    weivel_ledger_snapshot_release(&snapshot);
+    CHECK(weivel_quarantine_plugin(core, reader, NULL, NULL) == WEIVEL_STATUS_OK);
+    weivel_ledger_row row = WEIVEL_INIT(weivel_ledger_row);
+    CHECK(weivel_ledger_entry(core, reader, &row, NULL) == WEIVEL_STATUS_OK);
+    check_strings(&row.capabilities_consumed, consumed, "kept once stopped");
+    weivel_ledger_row_release(&row);
+    CHECK(weivel_open_plugin(core, reader, NULL, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_ledger_entry(core, reader, &row, NULL) == WEIVEL_STATUS_OK);
+    check_strings(&row.capabilities_consumed, none, "afresh when opened again");
+    weivel_ledger_row_release(&row);
+    weivel_ledger_row older;
+    memset(&older, 0xab, sizeof older);
+    older.size = (uint32_t)offsetof(weivel_ledger_row, capabilities_consumed);
+    older.storage = NULL;
+    CHECK(weivel_ledger_entry(core, reader, &older, NULL) == WEIVEL_STATUS_OK);
+    const unsigned char *beyond = (const unsigned char *)&older.capabilities_consumed;
+    bool untouched = true;
+    for (size_t index = 0; index < sizeof older.capabilities_consumed; index++) {
+        untouched = untouched && beyond[index] == 0xab;
+    }
+    CHECK(untouched && older.size == offsetof(weivel_ledger_row, capabilities_consumed));
+    weivel_ledger_row_release(&older);
+    weivel_core_destroy(core);
+}
+
 int main(void) {
+    each_reported_refusal_carries_its_code();
+    records_the_capabilities_each_activation_consumed();
     lists_each_plugin_in_registration_order_with_what_it_declared();
     records_what_each_activation_provided_and_consumed();
     a_late_call_is_no_relationship();

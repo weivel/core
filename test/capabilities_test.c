@@ -102,7 +102,7 @@ static weivel_handle provided_by(const consume_run *run, weivel_handle provider)
 
 static void read_all(consume_run *run, weivel_handle plugin, const char *id, step_record *record) {
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    record->status = weivel_capability_all(run->core, plugin, id, &list, NULL);
+    record->status = weivel_all_capabilities(run->core, plugin, id, &list, NULL);
     size_t used = (size_t)snprintf(record->outcome, sizeof record->outcome, "[");
     for (uint32_t index = 0; index < list.count; index++) {
         const weivel_capability_implementation *item = &list.items[index];
@@ -537,7 +537,7 @@ static uint32_t capability_events(weivel_handle watch, uint32_t change) {
 
 static uint32_t count_all(weivel_core *core, weivel_handle plugin, const char *id) {
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    CHECK(weivel_capability_all(core, plugin, id, &list, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_all_capabilities(core, plugin, id, &list, NULL) == WEIVEL_STATUS_OK);
     uint32_t count = list.count;
     CHECK(weivel_capability_list_release(&list) == WEIVEL_STATUS_OK);
     return count;
@@ -547,7 +547,7 @@ static void the_refusal_texts_are_exact(void) {
     weivel_core *core = core_knowing(NULL, 0);
     weivel_handle others = open_capabilities(core, "others", NONE, NONE);
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    CHECK(weivel_capability_all(core, others, "screens", &list, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_all_capabilities(core, others, "screens", &list, NULL) == WEIVEL_STATUS_REFUSED);
     drain(core);
     const seen *reach = nth_of(WEIVEL_EVENT_REACH_REFUSED, 0);
     CHECK(reach->plugin == others && reach->change == WEIVEL_REACH_CAPABILITY);
@@ -700,7 +700,7 @@ static void a_reopened_provider_rejoins_once_verified_again(void) {
     CHECK(count_all(core, agenda, "screens") == 0);
     CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_OK);
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    CHECK(weivel_capability_all(core, agenda, "screens", &list, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_all_capabilities(core, agenda, "screens", &list, NULL) == WEIVEL_STATUS_OK);
     CHECK(list.count == 1 && list.items[0].implementation == second && list.items[0].provider == calendar);
     CHECK(weivel_capability_list_release(&list) == WEIVEL_STATUS_OK);
     weivel_core_destroy(core);
@@ -712,7 +712,7 @@ static void a_service_and_a_capability_of_one_id_are_reported_apart(void) {
     weivel_handle got = 0;
     CHECK(weivel_get_service(core, others, "screens", &got, NULL) == WEIVEL_STATUS_REFUSED);
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    CHECK(weivel_capability_all(core, others, "screens", &list, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_all_capabilities(core, others, "screens", &list, NULL) == WEIVEL_STATUS_REFUSED);
     weivel_handle watch = 0;
     CHECK(weivel_watch_capability(core, others, "screens", &watch, NULL) == WEIVEL_STATUS_REFUSED);
     drain(core);
@@ -749,20 +749,20 @@ static void malformed_and_refused_calls_are_values(void) {
     CHECK(weivel_watch_capability(core, agenda, "screens", NULL, NULL) == WEIVEL_STATUS_MALFORMED);
     CHECK(weivel_watch_capability(core, unopened, "screens", &watch, NULL) == WEIVEL_STATUS_REFUSED);
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    CHECK(weivel_capability_all(core, agenda, "", &list, NULL) == WEIVEL_STATUS_MALFORMED);
-    CHECK(weivel_capability_all(core, agenda, "screens", NULL, NULL) == WEIVEL_STATUS_MALFORMED);
-    CHECK(weivel_capability_all(core, unopened, "screens", &list, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_all_capabilities(core, agenda, "", &list, NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_all_capabilities(core, agenda, "screens", NULL, NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_all_capabilities(core, unopened, "screens", &list, NULL) == WEIVEL_STATUS_REFUSED);
     weivel_capability_list small = WEIVEL_INIT(weivel_capability_list);
     small.size = (uint32_t)WEIVEL_CAPABILITY_LIST_FIRST_SIZE - 1;
-    CHECK(weivel_capability_all(core, agenda, "screens", &small, NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_all_capabilities(core, agenda, "screens", &small, NULL) == WEIVEL_STATUS_MALFORMED);
     CHECK(weivel_capability_list_release(&small) == WEIVEL_STATUS_MALFORMED);
     CHECK(weivel_capability_list_release(NULL) == WEIVEL_STATUS_MALFORMED);
     weivel_capability_list zero;
     memset(&zero, 0, sizeof zero);
     CHECK(weivel_capability_list_release(&zero) == WEIVEL_STATUS_OK);
-    CHECK(weivel_capability_all(core, agenda, "screens", &list, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_all_capabilities(core, agenda, "screens", &list, NULL) == WEIVEL_STATUS_OK);
     CHECK(list.count == 0 && list.items == NULL && list.storage != NULL);
-    CHECK(weivel_capability_all(core, agenda, "screens", &list, NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_all_capabilities(core, agenda, "screens", &list, NULL) == WEIVEL_STATUS_MALFORMED);
     CHECK(weivel_capability_list_release(&list) == WEIVEL_STATUS_OK);
     CHECK(list.storage == NULL && list.size == sizeof list);
     drain(core);
@@ -877,7 +877,7 @@ static void an_all_that_runs_out_of_memory_hands_nothing_over(void) {
     CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_OK);
     weivel_memory_fail_at(1);
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    CHECK(weivel_capability_all(core, agenda, "screens", &list, NULL) == WEIVEL_STATUS_OUT_OF_MEMORY);
+    CHECK(weivel_all_capabilities(core, agenda, "screens", &list, NULL) == WEIVEL_STATUS_OUT_OF_MEMORY);
     CHECK(list.count == 0 && list.storage == NULL);
     CHECK(holdings_now(core) == 0);
     forget(core);
@@ -894,7 +894,7 @@ static void churn_round(weivel_core *core, weivel_handle consumer) {
     CHECK(weivel_verify_activation(core, provider, NULL) == WEIVEL_STATUS_OK);
     CHECK(count_all(core, consumer, "screens") == 1);
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    CHECK(weivel_capability_all(core, provider, "undeclared", &list, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_all_capabilities(core, provider, "undeclared", &list, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(weivel_release_plugin(core, provider, NULL) == WEIVEL_STATUS_OK);
     CHECK(weivel_forget_plugin(core, provider, NULL) == WEIVEL_STATUS_OK);
     forget(core);
@@ -953,7 +953,7 @@ static void many_providers_keep_verify_order(void) {
     }
     forget(core);
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    CHECK(weivel_capability_all(core, reader, "screens", &list, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_all_capabilities(core, reader, "screens", &list, NULL) == WEIVEL_STATUS_OK);
     CHECK(list.count == PROVIDERS / 2);
     uint32_t out_of_order = 0;
     for (uint32_t index = 0; implementations != NULL && index < list.count; index++) {
@@ -968,7 +968,31 @@ static void many_providers_keep_verify_order(void) {
     weivel_core_destroy(core);
 }
 
+/** The host reaches any capability unfenced, holds what `all` and its watch hand it, and is revoked it. */
+static void the_host_reaches_every_capability_and_holds_like_a_plugin(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    weivel_handle watch = watch_capability(core, WEIVEL_HOST, "screens");
+    weivel_handle calendar = open_capabilities(core, "calendar", SCREENS, NONE);
+    weivel_handle implementation = provide(core, calendar, "screens");
+    CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    CHECK(count_all(core, WEIVEL_HOST, "screens") == 1);
+    CHECK(count_all(core, WEIVEL_HOST, "nobody:declares") == 0);
+    drain(core);
+    CHECK(capability_events(watch, WEIVEL_CAPABILITY_PROVIDED) == 1);
+    CHECK(count_kind(WEIVEL_EVENT_REACH_REFUSED) == 0);
+    CHECK(holdings_now(core) == 1);
+    forget(core);
+    CHECK(weivel_quarantine_plugin(core, calendar, NULL, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(revocations_to(WEIVEL_HOST, implementation) == 1);
+    CHECK(capability_events(watch, WEIVEL_CAPABILITY_WITHDRAWN) == 1);
+    CHECK(holdings_now(core) == 0);
+    CHECK(weivel_unregister(core, watch, NULL) == WEIVEL_STATUS_OK);
+    weivel_core_destroy(core);
+}
+
 int main(void) {
+    the_host_reaches_every_capability_and_holds_like_a_plugin();
     a_released_consumer_stops_hearing();
     a_throwing_listener_does_not_silence_the_others();
     answers_every_verified_implementation_in_activation_order();

@@ -396,7 +396,7 @@ weivel_status weivel_ledger(weivel_core *core, weivel_ledger_snapshot *snapshot,
     return status;
 }
 
-weivel_status weivel_ledger_release(weivel_ledger_snapshot *snapshot) {
+weivel_status weivel_ledger_snapshot_release(weivel_ledger_snapshot *snapshot) {
     if (snapshot != NULL && snapshot->size == 0) {
         return WEIVEL_STATUS_OK;
     }

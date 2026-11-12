@@ -551,7 +551,7 @@ static weivel_status all(weivel_core *core, weivel_handle consumer, const char *
     return WEIVEL_STATUS_OK;
 }
 
-weivel_status weivel_capability_all(weivel_core *core, weivel_handle plugin, const char *id,
+weivel_status weivel_all_capabilities(weivel_core *core, weivel_handle plugin, const char *id,
                                       weivel_capability_list *list, uint32_t *pending_events) {
     if (core == NULL) {
         return WEIVEL_STATUS_MALFORMED;
@@ -561,7 +561,7 @@ weivel_status weivel_capability_all(weivel_core *core, weivel_handle plugin, con
     if (!is_id(id) || !is_empty_list(list)) {
         status = weivel_core_refuse_malformed(
             core,
-            "weivel_capability_all was given no capability id, or a list missing, too small or still holding one",
+            "weivel_all_capabilities was given no capability id, or a list missing, too small or still holding one",
             "pass a non-empty capability id and a weivel_capability_list initialised with WEIVEL_INIT, or released "
             "since its last use");
     } else {

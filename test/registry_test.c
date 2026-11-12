@@ -843,7 +843,61 @@ static void thousands_of_plugins_and_services_resolve(void) {
     weivel_core_destroy(core);
 }
 
+/**
+ * The host asks as a plugin would, unfenced: it reaches any id, a plugin's own namespace included, holds what it is
+ * handed and is revoked it like a plugin, and no plugin stopping ends its watches or wants.
+ */
+static void the_host_reaches_every_service_and_holds_like_a_plugin(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    plugin_spec spec = {"calendar", NULL, {NULL}, {NULL}, {"calendar:events"}};
+    weivel_handle calendar = open_spec(core, &spec);
+    weivel_handle watch = 0;
+    CHECK(weivel_watch_service(core, WEIVEL_HOST, "calendar:events", &watch, NULL) == WEIVEL_STATUS_OK);
+    weivel_handle want = 0;
+    CHECK(weivel_want_service(core, WEIVEL_HOST, "calendar:events", NULL, &want, NULL) == WEIVEL_STATUS_OK);
+    weivel_handle unanswered = 0;
+    CHECK(weivel_want_service(core, WEIVEL_HOST, "nobody:offers", NULL, &unanswered, NULL) == WEIVEL_STATUS_OK);
+    weivel_handle got = 5;
+    CHECK(weivel_get_service(core, WEIVEL_HOST, "calendar:events", &got, NULL) == WEIVEL_STATUS_NONE);
+    CHECK(got == 0);
+    drain(core);
+    CHECK(the_journal.count == 0);
+    weivel_handle registration = register_service(core, calendar, "calendar:events");
+    CHECK(weivel_get_service(core, WEIVEL_HOST, "calendar:events", &got, NULL) == WEIVEL_STATUS_OK);
+    CHECK(got == registration);
+    drain(core);
+    const seen *settled = settlement_of(want);
+    CHECK(settled != NULL && settled->plugin == WEIVEL_HOST && settled->implementation == registration);
+    CHECK(heard_by(watch, WEIVEL_CHANGE_REGISTERED) == 1);
+    CHECK(nth_of(WEIVEL_EVENT_WATCH, 0)->plugin == WEIVEL_HOST);
+    forget(core);
+    CHECK(weivel_release_plugin(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(revocations_to(WEIVEL_HOST, registration) == 1);
+    CHECK(heard_by(watch, WEIVEL_CHANGE_UNREGISTERED) == 1);
+    CHECK(settlement_of(unanswered) == NULL);
+    weivel_handle again = open_spec(core, &spec);
+    forget(core);
+    weivel_handle second = register_service(core, again, "calendar:events");
+    drain(core);
+    CHECK(heard_by(watch, WEIVEL_CHANGE_REGISTERED) == 1);
+    CHECK(nth_of(WEIVEL_EVENT_WATCH, 0)->implementation == second);
+    CHECK(weivel_unregister(core, watch, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_unregister(core, unanswered, NULL) == WEIVEL_STATUS_OK);
+    forget(core);
+    CHECK(weivel_unregister(core, second, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(revocations_to(WEIVEL_HOST, second) == 1);
+    CHECK(count_kind(WEIVEL_EVENT_WATCH) == 0 && count_kind(WEIVEL_EVENT_WANT_SETTLED) == 0);
+    weivel_ledger_snapshot snapshot = WEIVEL_INIT(weivel_ledger_snapshot);
+    CHECK(weivel_ledger(core, &snapshot, NULL) == WEIVEL_STATUS_OK);
+    CHECK(snapshot.row_count == 2 && snapshot.refusal_count == 0);
+    weivel_ledger_snapshot_release(&snapshot);
+    weivel_core_destroy(core);
+}
+
 int main(void) {
+    the_host_reaches_every_service_and_holds_like_a_plugin();
     want_settles_when_a_provider_arrives_later();
     want_times_out_only_when_asked();
     want_waits_without_a_deadline_when_nothing_provides();

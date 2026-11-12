@@ -163,7 +163,7 @@ static void read_ledger(worker *self, weivel_handle consumer, const char *import
         }
     }
     expect(self, found == 1);
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
     weivel_ledger_row row = WEIVEL_INIT(weivel_ledger_row);
     expect(self, weivel_ledger_entry(self->core, consumer, &row, NULL) == WEIVEL_STATUS_OK);
     expect(self, row.status == WEIVEL_PLUGIN_STATUS_ACTIVE && strcmp(row.import_name, import_name) == 0);
@@ -216,7 +216,7 @@ static void run_round(worker *self, int round) {
                      WEIVEL_STATUS_OK);
     expect(self, weivel_verify_activation(core, provider, NULL) == WEIVEL_STATUS_OK);
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    expect(self, weivel_capability_all(core, consumer, names.capability, &list, NULL) == WEIVEL_STATUS_OK);
+    expect(self, weivel_all_capabilities(core, consumer, names.capability, &list, NULL) == WEIVEL_STATUS_OK);
     expect(self, list.count == 1 && list.items != NULL && list.items[0].implementation == implementation);
     weivel_capability_list_release(&list);
     drain(self);
@@ -360,7 +360,7 @@ static void check_ledger(weivel_core *core, const worker *workers) {
         CHECK(kept);
         check_text(snapshot.refusals[index].id, "nowhere:x", "the kept consumer's refusal");
     }
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
 }
 
 /** Checks the census: `kept` consumers each still hold a plugin, a want and a capability watch, and nothing else. */
@@ -446,7 +446,7 @@ static void threads_meeting_and_parting_on_one_core_leave_it_consistent(void) {
     weivel_ledger_snapshot snapshot = WEIVEL_INIT(weivel_ledger_snapshot);
     CHECK(weivel_ledger(core, &snapshot, NULL) == WEIVEL_STATUS_OK);
     CHECK(snapshot.row_count == 0 && snapshot.refusal_count == 0);
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
     for (int index = 0; index <= THREADS; index++) {
         free(workers[index].settled);
     }

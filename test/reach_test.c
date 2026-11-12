@@ -589,7 +589,7 @@ static void a_long_id_is_never_cut_from_a_reach_refusal(void) {
     CHECK(weivel_get_service(core, plugin, service, &got, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(whole_mentions(core, service) == 1);
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    CHECK(weivel_capability_all(core, plugin, capability, &list, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_all_capabilities(core, plugin, capability, &list, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(whole_mentions(core, capability) == 1);
     CHECK(weivel_get_service(core, binder, bound, &got, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(whole_mentions(core, bound) == 1);

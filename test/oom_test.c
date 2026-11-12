@@ -69,7 +69,7 @@ static void put_ledger(weivel_core *core, picture *into) {
         put(into, "reported %llu %llu %llu ", refusal->kind, refusal->plugin, refusal->code);
         put_text(into, refusal->id);
     }
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
 }
 
 /** Drains the queue into the picture, every event but a log, which the core may drop, by its kind and handles. */
@@ -257,7 +257,7 @@ static void get_events(world *made, weivel_handle plugin) {
 
 static void all_screens(world *made, weivel_handle plugin) {
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    CHECK(weivel_capability_all(made->core, plugin, "screens", &list, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_all_capabilities(made->core, plugin, "screens", &list, NULL) == WEIVEL_STATUS_OK);
     weivel_capability_list_release(&list);
 }
 
@@ -417,7 +417,7 @@ static void world_with_two_verified_screens(world *made) {
 
 static weivel_status notes_all(world *made) {
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    weivel_status status = weivel_capability_all(made->core, made->notes, "screens", &list, NULL);
+    weivel_status status = weivel_all_capabilities(made->core, made->notes, "screens", &list, NULL);
     weivel_capability_list_release(&list);
     return status;
 }
@@ -486,6 +486,16 @@ static weivel_status host_wants(world *made) {
     return weivel_want_service(made->core, WEIVEL_HOST, "calendar:events", NULL, &want, NULL);
 }
 
+static weivel_status host_gets(world *made) {
+    weivel_handle got = 0;
+    return weivel_get_service(made->core, WEIVEL_HOST, "calendar:events", &got, NULL);
+}
+
+static weivel_status host_watches(world *made) {
+    weivel_handle watch = 0;
+    return weivel_watch_service(made->core, WEIVEL_HOST, "calendar:events", &watch, NULL);
+}
+
 static weivel_status host_watches_screens(world *made) {
     weivel_handle watch = 0;
     return weivel_watch_capability(made->core, WEIVEL_HOST, "screens", &watch, NULL);
@@ -493,7 +503,7 @@ static weivel_status host_watches_screens(world *made) {
 
 static weivel_status host_all(world *made) {
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    weivel_status status = weivel_capability_all(made->core, WEIVEL_HOST, "screens", &list, NULL);
+    weivel_status status = weivel_all_capabilities(made->core, WEIVEL_HOST, "screens", &list, NULL);
     weivel_capability_list_release(&list);
     return status;
 }
@@ -515,6 +525,46 @@ static weivel_status register_a_manifest(world *made) {
     manifest.capabilities.provides.count = 1;
     weivel_handle plugin = 0;
     return weivel_register_manifest(made->core, &manifest, &plugin, NULL);
+}
+
+static weivel_status register_a_malformed_manifest(world *made) {
+    const char *twice[2] = {"screens", "screens"};
+    weivel_manifest manifest = WEIVEL_INIT(weivel_manifest);
+    manifest.import_name = "doubled";
+    manifest.capabilities.provides.items = twice;
+    manifest.capabilities.provides.count = 2;
+    weivel_handle plugin = 0;
+    return weivel_register_manifest(made->core, &manifest, &plugin, NULL);
+}
+
+/** Asking whether a malformed manifest is supported answers its whole refusal, or out of memory, never less. */
+static void supports_answers_a_whole_refusal_or_none(void) {
+    const char *twice[2] = {"screens", "screens"};
+    weivel_manifest manifest = WEIVEL_INIT(weivel_manifest);
+    manifest.import_name = "doubled";
+    manifest.capabilities.provides.items = twice;
+    manifest.capabilities.provides.count = 2;
+    world made;
+    make_world(&made);
+    uint32_t points = 0;
+    for (uint64_t nth = 1; nth < 1000; nth++) {
+        weivel_support answer = WEIVEL_INIT(weivel_support);
+        weivel_memory_fail_at(nth);
+        weivel_status status = weivel_supports(made.core, &manifest, &answer, NULL);
+        bool failed = weivel_memory_failed();
+        weivel_memory_fail_at(0);
+        bool whole = status == WEIVEL_STATUS_OK && answer.refusal.code == WEIVEL_REFUSAL_MALFORMED_MANIFEST &&
+                     strstr(answer.refusal.detail, "twice") != NULL && answer.refusal.fix[0] != '\0';
+        CHECK(whole || (status == WEIVEL_STATUS_OUT_OF_MEMORY && answer.storage == NULL));
+        weivel_support_release(&answer);
+        if (!failed) {
+            CHECK(whole);
+            break;
+        }
+        points++;
+    }
+    weivel_core_destroy(made.core);
+    printf("supports of a malformed manifest: %u allocations, each failing whole or not at all\n", (unsigned)points);
 }
 
 static void world_with_a_served_question(world *made) {
@@ -540,6 +590,8 @@ static weivel_status picky_is_served(world *made) {
 
 int main(void) {
     sweep("register a manifest", make_world, register_a_manifest);
+    sweep("register a malformed manifest", make_world, register_a_malformed_manifest);
+    supports_answers_a_whole_refusal_or_none();
     sweep("get a registered service", world_with_registration, notes_get);
     sweep("want a registered service", world_with_registration, notes_want);
     sweep("want, timed, with nothing registered", make_world, notes_want_timed);
@@ -557,7 +609,9 @@ int main(void) {
     sweep("release with holders, watches and wants", world_at_full_stretch, release_calendar);
     sweep("quarantine with holders, watches and wants", world_at_full_stretch, quarantine_calendar);
     sweep("forget a released plugin that still holds", world_with_a_late_holder, forget_notes);
+    sweep("get as the host", world_with_registration, host_gets);
     sweep("want as the host", make_world, host_wants);
+    sweep("watch a service as the host", make_world, host_watches);
     sweep("watch a capability as the host", world_watching_screens, host_watches_screens);
     sweep("all as the host", world_with_two_verified_screens, host_all);
     sweep("a yes that settles a constrained want", world_with_a_served_question, picky_is_served);

@@ -26,10 +26,13 @@ void weivel_manifest_problem_free(weivel_manifest_problem *problem) {
     problem->fix = NULL;
 }
 
-/** Fills the problem from `detail` and `fix`, each built by weivel_text_format or NULL, and frees both. */
+/**
+ * Fills the problem from `detail` and `fix`, each built by weivel_text_format or NULL, and frees `detail`. A NULL
+ * left in the problem means memory ran out describing it, which weivel_manifest_copy answers as such.
+ */
 static bool refuse_shape(shape_check *check, char *detail, char *fix) {
-    check->problem->detail = weivel_text_format("the manifest of \"%s\" %s", check->plugin,
-                                                detail == NULL ? "is malformed" : detail);
+    check->problem->detail =
+        detail == NULL ? NULL : weivel_text_format("the manifest of \"%s\" %s", check->plugin, detail);
     check->problem->fix = fix;
     free(detail);
     return false;
@@ -416,6 +419,10 @@ weivel_status weivel_manifest_copy(const weivel_manifest *callers, weivel_owned_
     problem->detail = NULL;
     problem->fix = NULL;
     if (!check_shape(&view, problem)) {
+        if (problem->detail == NULL || problem->fix == NULL) {
+            weivel_manifest_problem_free(problem);
+            return WEIVEL_STATUS_OUT_OF_MEMORY;
+        }
         return WEIVEL_STATUS_REFUSED;
     }
     arena measuring = {NULL, 0};

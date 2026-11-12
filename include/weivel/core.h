@@ -27,13 +27,21 @@
  *   delivered, so no want settles unheard and no holder misses a revocation. A log is the one event the core may
  *   drop when memory runs out; a rejected want whose refusal texts cannot be copied carries a fixed sentence in
  *   their place, its code always exact.
+ * - Answers. An answer the core fills into a caller's struct is size-prefixed and freed by its own release call.
+ *   Its arrays are of one of two kinds, and every answer says which. An element that may grow begins with its own
+ *   `uint32_t size`, the core's, and the caller steps through the array by the first element's `size`, never by
+ *   its own `sizeof`, reading only the fields both know: the capability list and the ledger's rows and refusals.
+ *   An element that never grows carries no size, is indexed at the caller's own stride, and anything a later
+ *   version adds arrives as a new array appended to the answer: the activation plan's edges, cycles and refusals,
+ *   each already the whole of what it is (two handles, a list of handles, a handle and its refusal).
  * - Strings. Strings handed in are copied before the call returns. Strings handed out are UTF-8, NUL-terminated,
  *   and belong to the struct that carries them until its release call.
  * - Time. The core owns no clock. Every timestamp is a caller-supplied int64_t count of milliseconds on a
  *   monotonic scale the caller chooses. The core answers its next deadline and acts on time only in
  *   weivel_advance.
  * - Threads. Every call taking a core may be made from any thread; one lock inside the core serialises them and
- *   is never held while anything outside the core runs.
+ *   is never held while anything outside the core runs. One thread drains the queue: events come out in the order
+ *   they happened, and two threads draining at once would split that order between them.
  * - Enums. Enumerations travel in struct fields as uint32_t, so their width never depends on the compiler.
  */
 
@@ -676,8 +684,9 @@ typedef struct weivel_plugin_refusal {
  *   plugin listed again (WEIVEL_REFUSAL_REPEATED_PLUGIN), then each one whose mandatory need nothing meets
  *   (WEIVEL_REFUSAL_UNMET_NEED), in the order they were found.
  *
- * @implNote The element structs of these arrays never grow, since a caller indexes them at its own compiled stride;
- * anything a later version adds to a plan arrives as a new array appended to this struct.
+ * Every array here is of the kind whose elements never grow (see Answers at the head of this file): a caller indexes
+ * them at its own compiled stride, and anything a later version adds to a plan arrives as a new array appended to
+ * this struct.
  */
 typedef struct weivel_activation_plan {
     uint32_t size;
@@ -735,9 +744,16 @@ WEIVEL_API weivel_status weivel_plan_activation(weivel_core *core, const weivel_
 WEIVEL_API weivel_status weivel_activation_plan_release(weivel_activation_plan *plan);
 
 /**
- * The owner of the host's own services: a reserved handle no plugin is ever issued. A service registered under it
- * is exempt from namespacing, owned by no plugin so no release or quarantine takes it away, and registering its id
- * again replaces it.
+ * The host itself: a reserved handle no plugin is ever issued.
+ *
+ * As an owner, a service registered under it is exempt from namespacing, owned by no plugin so no release or
+ * quarantine takes it away, and registering its id again replaces it.
+ *
+ * As an asker, it may be passed as the plugin of weivel_get_service, weivel_want_service, weivel_watch_service,
+ * weivel_all_capabilities and weivel_watch_capability. The host is never fenced, so it reaches every id, declared by
+ * no manifest, and is never refused or reported for reach; it is never late; it holds what it is handed and is
+ * revoked it, by a WEIVEL_EVENT_REVOKED whose `plugin` is WEIVEL_HOST, exactly as a plugin is; and since no plugin
+ * stops it, its watches and wants end only by weivel_unregister or when the core is destroyed. It has no ledger row.
  */
 #define WEIVEL_HOST ((weivel_handle)UINT64_MAX)
 
@@ -877,7 +893,8 @@ WEIVEL_API weivel_status weivel_register_service(weivel_core *core, weivel_handl
 WEIVEL_API weivel_status weivel_unregister(weivel_core *core, weivel_handle handle, uint32_t *pending_events);
 
 /**
- * Answers the service registered under `id` now, as its registration handle, for a plugin that may reach it.
+ * Answers the service registered under `id` now, as its registration handle, for a plugin that may reach it, or
+ * for the host (WEIVEL_HOST), which reaches every id.
  *
  * Reach is checked in this order: the plugin must list `id` among the services it consumes or provides
  * (WEIVEL_REFUSAL_UNDECLARED); then, when it binds `id` to a provider and another owner holds it, it is refused
@@ -932,8 +949,9 @@ typedef struct weivel_want_options {
  * either way exactly once: weivel_advance at or past `now + timeout_millis` rejects it with
  * WEIVEL_REFUSAL_TIMED_OUT, and weivel_next_deadline reports the earliest such moment.
  *
- * Reach is checked as weivel_get_service checks it, and a refusal rejects the want at once. A late want, from a
- * plugin no longer running, is rejected with WEIVEL_REFUSAL_STOPPED and logged. A want the plugin still waits on
+ * Reach is checked as weivel_get_service checks it, and a refusal rejects the want at once; the host (WEIVEL_HOST)
+ * asks unfenced and is never late. A late want, from a plugin no longer running, is rejected with
+ * WEIVEL_REFUSAL_STOPPED and logged. A want the plugin still waits on
  * when it is released or quarantined is rejected the same way.
  *
  * A want is constrained when the plugin's manifest gives `id` constraints. It never settles on a registration
@@ -1014,8 +1032,8 @@ WEIVEL_API weivel_status weivel_report_capacity(weivel_core *core, weivel_handle
  * and nothing registered before the watch is replayed. A watch bound to another provider skips its registrations
  * without a report. The watch lasts until weivel_unregister or until the plugin is released or quarantined.
  *
- * Reach is checked as weivel_get_service checks it, and a refused watch is inert. A late watch is inert and logged
- * only, never reported.
+ * Reach is checked as weivel_get_service checks it, and a refused watch is inert; the host (WEIVEL_HOST) watches
+ * unfenced. A late watch is inert and logged only, never reported.
  *
  * @param watch receives the watch handle. Required; 0 on every answer but OK.
  * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for a refusal of reach, a late watch, a stale plugin or one never
@@ -1114,7 +1132,8 @@ typedef struct weivel_capability_implementation {
 
 /**
  * The implementations of a capability, filled into a struct the caller owns. `items` holds `count` size-prefixed
- * elements, read as weivel_numbers is, in `storage`, private to the core, until weivel_capability_list_release.
+ * elements, the kind that may grow (see Answers at the head of this file), stepped through by the first one's
+ * `size`, in `storage`, private to the core, until weivel_capability_list_release.
  */
 typedef struct weivel_capability_list {
     uint32_t size;
@@ -1129,7 +1148,8 @@ typedef struct weivel_capability_list {
  *
  * Reach is checked first: the plugin must list `id` among the capabilities it consumes or provides, else it is
  * answered an empty list and refused (WEIVEL_REFUSAL_UNDECLARED), reported as a WEIVEL_EVENT_REACH_REFUSED of kind
- * WEIVEL_REACH_CAPABILITY once per plugin and id. Then a plugin no longer running is let through.
+ * WEIVEL_REACH_CAPABILITY once per plugin and id. Then a plugin no longer running is let through. The host
+ * (WEIVEL_HOST) reaches every id.
  *
  * The holder rule is the services' rule (weivel_unregister): a plugin holds each implementation this call or a
  * capability watch hearing it provided hands it, once however often, until the implementation is withdrawn or the
@@ -1147,8 +1167,8 @@ typedef struct weivel_capability_list {
  * list below its first shape or still holding one; WEIVEL_STATUS_OUT_OF_MEMORY.
  * Threading: any thread.
  */
-WEIVEL_API weivel_status weivel_capability_all(weivel_core *core, weivel_handle plugin, const char *id,
-                                               weivel_capability_list *list, uint32_t *pending_events);
+WEIVEL_API weivel_status weivel_all_capabilities(weivel_core *core, weivel_handle plugin, const char *id,
+                                                 weivel_capability_list *list, uint32_t *pending_events);
 
 /**
  * Frees what a capability list carries and leaves it empty.
@@ -1161,13 +1181,13 @@ WEIVEL_API weivel_status weivel_capability_list_release(weivel_capability_list *
 
 /**
  * Watches `id`: each later change to its verified implementations is a WEIVEL_EVENT_CAPABILITY, and nothing from
- * before the watch is replayed. Hearing an implementation provided hands it over, so the plugin holds it, as
- * weivel_capability_all's holder rule says, and is revoked it before the watch hears it withdrawn. The watch lasts
+ * before the watch is replayed. Hearing an implementation provided hands it over, so the plugin holds it under the
+ * holder rule of weivel_all_capabilities, and is revoked it before the watch hears it withdrawn. The watch lasts
  * until weivel_unregister, or until the plugin is released or quarantined, which first withdraws what the plugin
  * itself provided, so a plugin watching its own capability hears its own implementation leave.
  *
- * Reach is checked as weivel_capability_all checks it, and a refused watch is inert. A late watch, from a plugin no
- * longer running, is inert and logged only, never reported.
+ * Reach is checked as weivel_all_capabilities checks it, and a refused watch is inert; the host (WEIVEL_HOST) watches
+ * unfenced. A late watch, from a plugin no longer running, is inert and logged only, never reported.
  *
  * @param watch receives the watch handle. Required; 0 on every answer but OK.
  * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for an undeclared id, a late watch, a stale plugin or one never
@@ -1200,7 +1220,7 @@ typedef enum weivel_plugin_status {
  * - `services_provided`: each service id it registered; `capabilities_provided`: each capability it provided,
  *   verified or not.
  * - `services_consumed`: each service id it asked for by a get, a want or a watch its reach allowed, answered or
- *   not.
+ *   not; `capabilities_consumed`, appended after `storage`, likewise each capability id by an `all` or a watch.
  *
  * Every text and list lives in `storage`, private to the core, until weivel_ledger_row_release; in a row a
  * weivel_ledger_snapshot carries, `storage` is NULL and the snapshot owns everything.
@@ -1251,11 +1271,12 @@ typedef struct weivel_declaration_refusal {
  * The ledger as it stood at one moment, filled into a struct the caller owns.
  *
  * - `rows`: one per plugin registered and not forgotten, in the order they were registered, as size-prefixed
- *   elements read as weivel_numbers is.
+ *   elements, the kind that may grow (see Answers at the head of this file), stepped through by the first one's
+ *   `size`.
  * - `refusals`: every refusal of reach reported for those plugins, in the order reported, each once per plugin,
  *   kind and id, likewise size-prefixed. A forgotten plugin's refusals go with its row.
  *
- * Everything lives in `storage`, private to the core, until weivel_ledger_release; an empty array is NULL with
+ * Everything lives in `storage`, private to the core, until weivel_ledger_snapshot_release; an empty array is NULL with
  * count 0.
  */
 typedef struct weivel_ledger_snapshot {
@@ -1271,7 +1292,7 @@ typedef struct weivel_ledger_snapshot {
  * Answers the whole ledger. Nothing in it changes when the core does afterwards.
  *
  * @param snapshot the caller's struct with `size` set and nothing held; on WEIVEL_STATUS_OK it must be passed to
- * weivel_ledger_release.
+ * weivel_ledger_snapshot_release.
  * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_MALFORMED for a NULL core or snapshot, a snapshot below its first shape or
  * still holding one, queuing a refusal when the core is given; WEIVEL_STATUS_OUT_OF_MEMORY.
  * Threading: any thread.
@@ -1285,7 +1306,7 @@ WEIVEL_API weivel_status weivel_ledger(weivel_core *core, weivel_ledger_snapshot
  * WEIVEL_STATUS_MALFORMED for NULL or a size between 1 and the snapshot's first shape.
  * Threading: any thread; needs no core.
  */
-WEIVEL_API weivel_status weivel_ledger_release(weivel_ledger_snapshot *snapshot);
+WEIVEL_API weivel_status weivel_ledger_snapshot_release(weivel_ledger_snapshot *snapshot);
 
 /**
  * Answers one plugin's row, as weivel_ledger would show it.
