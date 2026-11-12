@@ -88,7 +88,11 @@ typedef enum weivel_refusal_code {
     /** This host cannot load the manifest's plugin; the answer's axis says which check refused it. */
     WEIVEL_REFUSAL_INCOMPATIBLE = 4,
     /** A plugin with this import name is already registered on this core; detail names it. */
-    WEIVEL_REFUSAL_NAME_TAKEN = 5
+    WEIVEL_REFUSAL_NAME_TAKEN = 5,
+    /** A plugin needs something mandatory that nothing in its activation set provides; detail names the need. */
+    WEIVEL_REFUSAL_UNMET_NEED = 6,
+    /** A plugin was listed more than once in one activation set; its later listings are refused. */
+    WEIVEL_REFUSAL_REPEATED_PLUGIN = 7
 } weivel_refusal_code;
 
 /**
@@ -417,6 +421,107 @@ WEIVEL_API weivel_status weivel_support_release(weivel_support *answer);
  */
 WEIVEL_API weivel_status weivel_register_manifest(weivel_core *core, const weivel_manifest *manifest,
                                                   weivel_handle *plugin, uint32_t *pending_events);
+
+/**
+ * Which declarations draw the edges an activation plan orders by. There is no default: the host chooses, because a
+ * capability implies order on one tier and does not on another. Declarations of the other kind are ignored
+ * entirely, for ordering and for refusal alike.
+ */
+typedef enum weivel_edge_source {
+    /** A plugin's provided and consumed capabilities. A consumed capability is always optional. */
+    WEIVEL_EDGES_CAPABILITIES = 1,
+    /** A plugin's provided and consumed services, each consumed one optional or not as its manifest says. */
+    WEIVEL_EDGES_SERVICES = 2
+} weivel_edge_source;
+
+/** One edge of an activation plan: `provider` activates before `consumer`. */
+typedef struct weivel_edge {
+    weivel_handle provider;
+    weivel_handle consumer;
+} weivel_edge;
+
+/** One cycle of an activation plan: at least two plugins that each wait, directly or not, on all the others. */
+typedef struct weivel_cycle {
+    const weivel_handle *members;
+    uint32_t count;
+} weivel_cycle;
+
+/** A plugin an activation plan will not start, and why. */
+typedef struct weivel_plugin_refusal {
+    weivel_handle plugin;
+    weivel_refusal refusal;
+} weivel_plugin_refusal;
+
+/**
+ * The answer to weivel_plan_activation, filled into a struct the caller owns. Every array and text lives in
+ * `storage`, private to the core, until weivel_activation_plan_release; an empty array is NULL with count 0.
+ *
+ * - `order`: the plugins to start, each after every plugin it has an edge from.
+ * - `edges`: provider and consumer pairs between plugins that will be considered for start (refused plugins draw
+ *   none), consumers in input order and each one's providers in the order its needs and the input name them.
+ * - `cycles`: each set of plugins that need each other. Its members are neither refused nor in `order`; a plugin
+ *   that needs one starts without it when the need is optional and is refused when it is mandatory.
+ * - `refusals`: the plugins that will not start: a handle that names no plugin (WEIVEL_REFUSAL_STALE_HANDLE), a
+ *   plugin listed again (WEIVEL_REFUSAL_REPEATED_PLUGIN), then each one whose mandatory need nothing meets
+ *   (WEIVEL_REFUSAL_UNMET_NEED), in the order they were found.
+ *
+ * @implNote The element structs of these arrays never grow, since a caller indexes them at its own compiled stride;
+ * anything a later version adds to a plan arrives as a new array appended to this struct.
+ */
+typedef struct weivel_activation_plan {
+    uint32_t size;
+    const weivel_handle *order;
+    uint32_t order_count;
+    const weivel_edge *edges;
+    uint32_t edge_count;
+    const weivel_cycle *cycles;
+    uint32_t cycle_count;
+    const weivel_plugin_refusal *refusals;
+    uint32_t refusal_count;
+    void *storage;
+} weivel_activation_plan;
+
+/**
+ * Plans the activation of registered plugins: a provider before its consumers, cycles and refusals as data.
+ *
+ * A plugin's offers and needs are read from the manifest it was registered with, of the kind `edge_source` names.
+ * A need any other plugin of the set offers draws an edge from that plugin to it; one only the host offers draws
+ * none. A mandatory need nothing in the set or the host meets refuses its plugin; an optional one waits; whether a
+ * need is degradable never excuses an absence. A refused plugin stops being a provider, and so does a cycle member,
+ * so refusal runs until a pass refuses nothing more. A cycle member is reported in its cycle, not refused.
+ *
+ * The order is built in sweeps over `plugins` as given: each sweep places, in input order, every plugin whose
+ * providers are all placed or in a cycle, and sweeps repeat until one places nothing. The host's own services count
+ * as placed from the end of the first sweep, as though the host were listed last. So the same input always answers
+ * the same order, the one the reference engine answers.
+ *
+ * @param plugins handles weivel_register_manifest answered, read only during the call; may be NULL when `count` is
+ * 0.
+ * @param edge_source a weivel_edge_source.
+ * @param host_provided service ids the host supplies itself; may be NULL for none, read only during the call. They
+ * meet a need under WEIVEL_EDGES_SERVICES as a plugin's offer would, never appear in the plan, and are ignored
+ * under WEIVEL_EDGES_CAPABILITIES.
+ * @param plan the caller's struct with `size` set and nothing held, as WEIVEL_INIT or a release leaves it; on
+ * WEIVEL_STATUS_OK it holds the plan and must be passed to weivel_activation_plan_release.
+ * @param pending_events receives how many events wait; may be NULL.
+ * @return WEIVEL_STATUS_OK with a plan, including one that refuses or cycles, which queues nothing;
+ * WEIVEL_STATUS_MALFORMED for a NULL core or plan, a plan below its first shape or still holding one, NULL plugins
+ * with a count, an edge source that is no weivel_edge_source, or a host_provided list that cannot be read, queuing
+ * a refusal when the core is given; WEIVEL_STATUS_OUT_OF_MEMORY.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_plan_activation(weivel_core *core, const weivel_handle *plugins, uint32_t count,
+                                                uint32_t edge_source, const weivel_strings *host_provided,
+                                                weivel_activation_plan *plan, uint32_t *pending_events);
+
+/**
+ * Frees what a plan carries and leaves it empty.
+ *
+ * @return WEIVEL_STATUS_OK, also as a no-op for an empty plan or an all-zero one (size 0); WEIVEL_STATUS_MALFORMED
+ * for NULL or a size between 1 and the plan's first shape.
+ * Threading: any thread; needs no core.
+ */
+WEIVEL_API weivel_status weivel_activation_plan_release(weivel_activation_plan *plan);
 
 #ifdef __cplusplus
 }
