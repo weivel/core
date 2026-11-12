@@ -126,7 +126,8 @@ static weivel_status report_serves(weivel_core *core, const seen *asked, bool se
 static uint32_t questions_of(uint32_t question) {
     uint32_t count = 0;
     for (uint32_t at = 0; at < the_journal.count; at++) {
-        count += the_journal.items[at].kind == WEIVEL_EVENT_CAPACITY_WANTED && the_journal.items[at].question == question;
+        const seen *item = &the_journal.items[at];
+        count += item->kind == WEIVEL_EVENT_CAPACITY_WANTED && item->question == question;
     }
     return count;
 }
@@ -262,7 +263,7 @@ static resolve_outcome resolve(resolve_given *given) {
 static void a_live_attribute_leaves_the_other_advertised_claims_standing(void) {
     resolve_given given = {{{"minReplicas", "maxLatencyMs"}, {3, 50}},
                            false,
-                           {{{"maxReplicas", "latencyMs"}, {3, 10}}, {{{"maxReplicas"}, {5}}}},
+                           {.advertised = {{"maxReplicas", "latencyMs"}, {3, 10}}, .by_poll = {{{"maxReplicas"}, {5}}}},
                            2000,
                            1000};
     resolve_outcome outcome = resolve(&given);
@@ -274,7 +275,11 @@ static void a_live_attribute_leaves_the_other_advertised_claims_standing(void) {
 }
 
 static void an_empty_live_attribute_map_keeps_the_advertised_claim(void) {
-    resolve_given given = {{{"minReplicas"}, {3}}, false, {{{"maxReplicas"}, {3}}, {{{NULL}, {0}}}}, 30000, 1000};
+    resolve_given given = {{{"minReplicas"}, {3}},
+                           false,
+                           {.advertised = {{"maxReplicas"}, {3}}, .by_poll = {{{NULL}, {0}}}},
+                           30000,
+                           1000};
     resolve_outcome outcome = resolve(&given);
     CHECK(outcome.served);
     CHECK(outcome.at_poll == 1);
@@ -283,7 +288,11 @@ static void an_empty_live_attribute_map_keeps_the_advertised_claim(void) {
 }
 
 static void asks_with_the_consumers_constraints_before_falling_back(void) {
-    resolve_given given = {{{"minReplicas"}, {3}}, true, {{{"maxReplicas"}, {1}}, {{{"maxReplicas"}, {1}}}}, 2000, 1000};
+    resolve_given given = {{{"minReplicas"}, {3}},
+                           true,
+                           {.advertised = {{"maxReplicas"}, {1}}, .by_poll = {{{"maxReplicas"}, {1}}}},
+                           2000,
+                           1000};
     given.provider.serves_only_unconstrained = true;
     resolve_outcome outcome = resolve(&given);
     CHECK(given.provider.ask_count == 2);
@@ -295,7 +304,11 @@ static void asks_with_the_consumers_constraints_before_falling_back(void) {
 }
 
 static void degrades_when_never_satisfied_and_degradable(void) {
-    resolve_given given = {{{"minReplicas"}, {3}}, true, {{{"maxReplicas"}, {1}}, {{{"maxReplicas"}, {1}}}}, 2000, 1000};
+    resolve_given given = {{{"minReplicas"}, {3}},
+                           true,
+                           {.advertised = {{"maxReplicas"}, {1}}, .by_poll = {{{"maxReplicas"}, {1}}}},
+                           2000,
+                           1000};
     resolve_outcome outcome = resolve(&given);
     CHECK(!outcome.served);
     CHECK(outcome.degraded);
@@ -311,7 +324,11 @@ static void degrades_when_never_satisfied_and_degradable(void) {
 }
 
 static void refuses_when_never_satisfied_and_not_degradable(void) {
-    resolve_given given = {{{"minReplicas"}, {3}}, false, {{{"maxReplicas"}, {1}}, {{{"maxReplicas"}, {1}}}}, 2000, 1000};
+    resolve_given given = {{{"minReplicas"}, {3}},
+                           false,
+                           {.advertised = {{"maxReplicas"}, {1}}, .by_poll = {{{"maxReplicas"}, {1}}}},
+                           2000,
+                           1000};
     resolve_outcome outcome = resolve(&given);
     CHECK(!outcome.served);
     CHECK(!outcome.degraded);
@@ -332,7 +349,8 @@ static void refuses_when_never_satisfied_and_not_degradable(void) {
 static void serves_when_attributes_satisfy_before_the_deadline(void) {
     resolve_given given = {{{"minReplicas"}, {3}},
                            false,
-                           {{{"maxReplicas"}, {1}}, {{{"maxReplicas"}, {1}}, {{"maxReplicas"}, {3}}}},
+                           {.advertised = {{"maxReplicas"}, {1}},
+                            .by_poll = {{{"maxReplicas"}, {1}}, {{"maxReplicas"}, {3}}}},
                            30000,
                            1000};
     resolve_outcome outcome = resolve(&given);
@@ -560,12 +578,24 @@ static void the_last_poll_refused_still_asks_once_more_before_falling_back(void)
 
 /** An upper bound is met at or below its value and missed above it. */
 static void an_upper_bound_is_met_only_at_or_below_its_value(void) {
-    resolve_given within = {{{"maxLatencyMs"}, {50}}, false, {{{"latencyMs"}, {50}}, {{{NULL}, {0}}}}, 0, 1000};
+    resolve_given within = {{{"maxLatencyMs"}, {50}},
+                            false,
+                            {.advertised = {{"latencyMs"}, {50}}, .by_poll = {{{NULL}, {0}}}},
+                            0,
+                            1000};
     CHECK(resolve(&within).served);
-    resolve_given above = {{{"maxLatencyMs"}, {50}}, false, {{{"latencyMs"}, {51}}, {{{NULL}, {0}}}}, 0, 1000};
+    resolve_given above = {{{"maxLatencyMs"}, {50}},
+                           false,
+                           {.advertised = {{"latencyMs"}, {51}}, .by_poll = {{{NULL}, {0}}}},
+                           0,
+                           1000};
     resolve_outcome refused = resolve(&above);
     CHECK(!refused.served && refused.code == WEIVEL_REFUSAL_UNMET_CONSTRAINT);
-    resolve_given lower = {{{"minReplicas"}, {3}}, false, {{{"maxReplicas"}, {4}}, {{{NULL}, {0}}}}, 0, 1000};
+    resolve_given lower = {{{"minReplicas"}, {3}},
+                           false,
+                           {.advertised = {{"maxReplicas"}, {4}}, .by_poll = {{{NULL}, {0}}}},
+                           0,
+                           1000};
     CHECK(resolve(&lower).served);
 }
 
