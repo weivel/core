@@ -19,14 +19,21 @@ static void retire(weivel_core *core, weivel_want *want) {
         weivel_deadlines_cancel(core->deadlines, want->handle);
     }
     weivel_handles_release(core->handles, want->handle, WEIVEL_RECORD_WANT);
+    if (want->slot != NULL) {
+        weivel_registry_release_slot(core->registry, want->slot);
+    }
 }
 
-void weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration) {
+weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration) {
+    weivel_status status = weivel_registry_hold(core, registration, want->consumer);
+    if (status != WEIVEL_STATUS_OK) {
+        return status;
+    }
     retire(core, want);
-    weivel_registry_hold(core, registration, want->consumer);
     weivel_want_event settled = {want->handle, want->consumer->handle, registration->handle, {0, NULL, NULL}};
     weivel_events_push_want(core->events, &settled, NULL, NULL);
     free(want);
+    return WEIVEL_STATUS_OK;
 }
 
 void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, const char *detail, const char *fix) {
@@ -49,7 +56,9 @@ void weivel_waiting_arrival(weivel_core *core, weivel_slot *slot) {
         weivel_link *next = link->next;
         weivel_want *want = WEIVEL_RECORD_OF(link, weivel_want, by_slot);
         if (weivel_registry_accepts(want->provider, registration)) {
-            weivel_waiting_settle(core, want, registration);
+            if (weivel_waiting_settle(core, want, registration) != WEIVEL_STATUS_OK) {
+                weivel_core_log(core, WEIVEL_LOG_ERROR, "memory ran out settling a want, so it still waits");
+            }
         } else {
             weivel_reach mismatch;
             weivel_reach_refuse_provider(core, want->consumer, slot->id, want->provider,
@@ -123,8 +132,7 @@ static weivel_status decide(weivel_core *core, weivel_want *want, const char *id
         return WEIVEL_STATUS_OK;
     }
     if (want->slot->registration != NULL) {
-        weivel_waiting_settle(core, want, want->slot->registration);
-        return WEIVEL_STATUS_OK;
+        return weivel_waiting_settle(core, want, want->slot->registration);
     }
     return enqueue(core, want, options);
 }
@@ -144,6 +152,9 @@ static weivel_status want_service(weivel_core *core, weivel_handle consumer, con
     }
     weivel_want *want = new_want(core, plugin, slot);
     if (want == NULL) {
+        if (slot != NULL) {
+            weivel_registry_release_slot(core->registry, slot);
+        }
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
     want->provider = reach.provider;

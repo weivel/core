@@ -189,6 +189,7 @@ static inline weivel_handle register_spec(weivel_core *core, const plugin_spec *
     }
     weivel_manifest manifest = WEIVEL_INIT(weivel_manifest);
     manifest.import_name = spec->import_name != NULL ? spec->import_name : spec->identity;
+    manifest.identity = spec->identity;
     manifest.api = 1;
     manifest.services.consumes.items = consumed == 0 ? NULL : wants;
     manifest.services.consumes.count = consumed;
@@ -199,12 +200,10 @@ static inline weivel_handle register_spec(weivel_core *core, const plugin_spec *
     return plugin;
 }
 
-/** Registers and opens a plugin under its identity, as a host opens a plugin's context. */
+/** Registers a plugin under its identity and opens it, as a host opens a plugin's context. */
 static inline weivel_handle open_spec(weivel_core *core, const plugin_spec *spec) {
     weivel_handle plugin = register_spec(core, spec);
-    weivel_plugin_options options = WEIVEL_INIT(weivel_plugin_options);
-    options.identity = spec->identity;
-    CHECK(weivel_open_plugin(core, plugin, &options, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_open_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
     return plugin;
 }
 

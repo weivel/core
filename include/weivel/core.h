@@ -96,9 +96,9 @@ typedef enum weivel_refusal_code {
     WEIVEL_REFUSAL_UNMET_NEED = 6,
     /** A plugin was listed more than once in one activation set; its later listings are refused. */
     WEIVEL_REFUSAL_REPEATED_PLUGIN = 7,
-    /** A plugin's lifecycle does not allow the call: it was never opened, is open already, or was released. */
+    /** A plugin's lifecycle does not allow the call: it was never opened, is open already, was released, or is not. */
     WEIVEL_REFUSAL_PLUGIN_STATE = 8,
-    /** Another plugin that is not released already holds the identity a plugin is opened with. */
+    /** Another registered plugin that is not released already holds the identity a manifest names. */
     WEIVEL_REFUSAL_IDENTITY_TAKEN = 9,
     /** A plugin registered a service id outside its namespace that is not well known. */
     WEIVEL_REFUSAL_OUTSIDE_NAMESPACE = 10,
@@ -342,6 +342,12 @@ typedef struct weivel_manifest {
     weivel_service_declarations services;
     /** The permissions the plugin asks for, opaque. Appended after the manifest's first shape. */
     weivel_strings permissions;
+    /**
+     * Who the plugin is, opaque, supplied by whatever loaded it rather than written by the plugin: the name a
+     * consumer's `provider` binds to. NULL means its import name; an empty one is malformed. Fixed for the life of
+     * the registration. Appended after `permissions`.
+     */
+    const char *identity;
 } weivel_manifest;
 
 /** The api level this core implements, which a host implements unless it says otherwise. */
@@ -497,8 +503,10 @@ WEIVEL_API weivel_status weivel_support_release(weivel_support *answer);
  * @param pending_events receives how many events wait; may be NULL.
  * @return WEIVEL_STATUS_OK with `*plugin` set; WEIVEL_STATUS_REFUSED for a malformed manifest, queuing a refusal
  * with code WEIVEL_REFUSAL_MALFORMED_MANIFEST, or for an import name a registered plugin already holds, since the
- * import name namespaces a plugin's services, queuing one with code WEIVEL_REFUSAL_NAME_TAKEN; WEIVEL_STATUS_MALFORMED for a NULL core, manifest or plugin or a
- * manifest smaller than its first shape, queuing a refusal when the core is given; WEIVEL_STATUS_OUT_OF_MEMORY.
+ * import name namespaces a plugin's services, queuing one with code WEIVEL_REFUSAL_NAME_TAKEN, or for an identity
+ * one already holds, since a consumer's `provider` binds to it, queuing WEIVEL_REFUSAL_IDENTITY_TAKEN;
+ * WEIVEL_STATUS_MALFORMED for a NULL core, manifest or plugin or a manifest smaller than its first shape, queuing a
+ * refusal when the core is given; WEIVEL_STATUS_OUT_OF_MEMORY.
  * `*plugin` is 0 on every answer but OK.
  * Threading: any thread.
  */
@@ -616,26 +624,20 @@ WEIVEL_API weivel_status weivel_activation_plan_release(weivel_activation_plan *
 /** How a plugin is opened. Zero, or a field beyond `size`, means the default. */
 typedef struct weivel_plugin_options {
     uint32_t size;
-    /**
-     * Who the plugin is, opaque, supplied by whatever loaded it: the name a consumer's `provider` binds to. Copied.
-     * NULL means its import name.
-     */
-    const char *identity;
     /** The caller's own token for the plugin, carried through uninspected and answered by weivel_plugin_payload. */
     uint64_t payload;
 } weivel_plugin_options;
 
 /**
  * Opens a registered plugin, so it may register, get, want and watch services. Opening a quarantined plugin again
- * lifts its fence, under the identity given now.
+ * lifts its fence; its identity is the one its manifest was registered with, always.
  *
  * @param plugin a handle weivel_register_manifest answered.
  * @param options may be NULL for every default; read only during the call.
  * @param pending_events receives how many events wait; may be NULL.
- * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for a stale handle (WEIVEL_REFUSAL_STALE_HANDLE), a plugin open
- * already or released (WEIVEL_REFUSAL_PLUGIN_STATE), or an identity another plugin that is not released holds
- * (WEIVEL_REFUSAL_IDENTITY_TAKEN), each queuing a refusal; WEIVEL_STATUS_MALFORMED for a NULL core, options below
- * their first shape or an empty identity; WEIVEL_STATUS_OUT_OF_MEMORY.
+ * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for a stale handle (WEIVEL_REFUSAL_STALE_HANDLE) or a plugin
+ * open already or released (WEIVEL_REFUSAL_PLUGIN_STATE), each queuing a refusal; WEIVEL_STATUS_MALFORMED for a
+ * NULL core or options below their first shape.
  * Threading: any thread.
  */
 WEIVEL_API weivel_status weivel_open_plugin(weivel_core *core, weivel_handle plugin,
@@ -658,9 +660,9 @@ WEIVEL_API weivel_status weivel_plugin_payload(weivel_core *core, weivel_handle 
  * WEIVEL_REFUSAL_STOPPED, and every service it holds is revoked to it. Its import name and identity are free again
  * at once, so a plugin of the same name may be registered.
  *
- * The handle stays valid, so a call the released plugin still makes is late: a `get` is let through, a `want` is
- * rejected, a `watch` or a registration is refused with a log only. Its record is kept until the core is destroyed.
- * Releasing a released plugin does nothing.
+ * The handle stays valid until weivel_forget_plugin, so a call the released plugin still makes is late: a `get` is
+ * let through and starts a new holding, a `want` is rejected, a `watch` or a registration is refused with a log
+ * only. Releasing a released plugin does nothing.
  *
  * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for a stale handle; WEIVEL_STATUS_MALFORMED for a NULL core.
  * Threading: any thread.
@@ -678,6 +680,17 @@ WEIVEL_API weivel_status weivel_release_plugin(weivel_core *core, weivel_handle 
  */
 WEIVEL_API weivel_status weivel_quarantine_plugin(weivel_core *core, weivel_handle plugin,
                                                   uint32_t *pending_events);
+
+/**
+ * Forgets a released plugin: its record, its manifest, the refusals reported for it and its handle all go, and
+ * whatever it still holds through late calls is revoked to it first. The handle then names nothing, so a call made
+ * with it afterwards is refused with WEIVEL_REFUSAL_STALE_HANDLE, and its slot may name something new later.
+ *
+ * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for a stale handle or a plugin not released
+ * (WEIVEL_REFUSAL_PLUGIN_STATE), queuing a refusal; WEIVEL_STATUS_MALFORMED for a NULL core.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_forget_plugin(weivel_core *core, weivel_handle plugin, uint32_t *pending_events);
 
 /**
  * Registers a service. The core holds no object: the registration handle answered here stands for the
@@ -725,7 +738,9 @@ WEIVEL_API weivel_status weivel_unregister(weivel_core *core, weivel_handle hand
  * Reach is checked in this order: the plugin must list `id` among the services it consumes or provides
  * (WEIVEL_REFUSAL_UNDECLARED); then, when it binds `id` to a provider and another owner holds it, it is refused
  * (WEIVEL_REFUSAL_WRONG_PROVIDER); then a plugin no longer running is late, and a late `get` is let through. A
- * refusal is reported, a WEIVEL_EVENT_REACH_REFUSED, once per plugin and id. The plugin then holds what it got.
+ * refusal is reported, a WEIVEL_EVENT_REACH_REFUSED, once per plugin and id. The plugin then holds what it got,
+ * a released plugin too: its late `get` starts a new holding, revoked to it when the service goes or the plugin is
+ * forgotten.
  *
  * @param implementation receives the registration handle, or 0. Required.
  * @return WEIVEL_STATUS_OK with a service; WEIVEL_STATUS_NONE when nothing is registered under `id`, which is

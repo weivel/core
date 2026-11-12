@@ -253,6 +253,12 @@ static bool check_shape(const weivel_manifest *manifest, weivel_manifest_problem
         snprintf(problem->fix, sizeof problem->fix, "give the manifest an import name");
         return false;
     }
+    if (manifest->identity != NULL && manifest->identity[0] == '\0') {
+        snprintf(problem->detail, sizeof problem->detail, "the manifest of \"%s\" gives an empty identity",
+                 manifest->import_name);
+        snprintf(problem->fix, sizeof problem->fix, "give it an identity, or none for its import name");
+        return false;
+    }
     shape_check check = {manifest->import_name, problem};
     return check_strings(&check, &manifest->targets, "targets") &&
            check_strings(&check, &manifest->capabilities.provides, "the capabilities it provides") &&
@@ -386,6 +392,7 @@ static weivel_manifest keep_manifest(arena *block, const weivel_manifest *source
     kept.services.provides = keep_offers(block, &source->services.provides);
     kept.services.consumes = keep_wants(block, &source->services.consumes);
     kept.permissions = keep_strings(block, &source->permissions);
+    kept.identity = source->identity == NULL ? kept.import_name : keep_text(block, source->identity);
     return kept;
 }
 

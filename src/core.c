@@ -160,6 +160,17 @@ weivel_status weivel_event_release(weivel_event *event) {
     return WEIVEL_STATUS_OK;
 }
 
+void weivel_core_census(weivel_core *core, weivel_census *census) {
+    weivel_mutex_lock(core->mutex);
+    census->plugins = weivel_plugins_count(core->plugins);
+    census->slots = core->registry->slot_count;
+    census->holdings = core->registry->holding_count;
+    census->live_handles = weivel_handles_live(core->handles);
+    census->handle_slots = weivel_handles_slots(core->handles);
+    census->deadlines = (uint32_t)weivel_deadlines_count(core->deadlines);
+    weivel_mutex_unlock(core->mutex);
+}
+
 weivel_status weivel_next_deadline(weivel_core *core, int64_t *deadline, uint32_t *pending_events) {
     if (core == NULL) {
         return WEIVEL_STATUS_MALFORMED;

@@ -5,18 +5,18 @@
 #include "core_internal.h"
 #include "registry.h"
 
-static weivel_reach_record *append_record(weivel_registry *registry, const weivel_plugin *plugin, const char *id) {
-    if (registry->reported_count == registry->reported_capacity) {
-        if (registry->reported_capacity > UINT32_MAX / 2) {
+static weivel_reach_record *append_record(weivel_registry *registry, weivel_plugin *plugin, const char *id) {
+    if (plugin->reported_count == plugin->reported_capacity) {
+        if (plugin->reported_capacity > UINT32_MAX / 2) {
             return NULL;
         }
-        uint32_t capacity = registry->reported_capacity == 0 ? 16 : registry->reported_capacity * 2;
-        weivel_reach_record *grown = realloc(registry->reported, (size_t)capacity * sizeof *grown);
+        uint32_t capacity = plugin->reported_capacity == 0 ? 4 : plugin->reported_capacity * 2;
+        weivel_reach_record *grown = realloc(plugin->reported, (size_t)capacity * sizeof *grown);
         if (grown == NULL) {
             return NULL;
         }
-        registry->reported = grown;
-        registry->reported_capacity = capacity;
+        plugin->reported = grown;
+        plugin->reported_capacity = capacity;
     }
     size_t length = strlen(id) + 1;
     char *copy = malloc(length);
@@ -24,10 +24,11 @@ static weivel_reach_record *append_record(weivel_registry *registry, const weive
         return NULL;
     }
     memcpy(copy, id, length);
-    weivel_reach_record *record = &registry->reported[registry->reported_count++];
+    weivel_reach_record *record = &plugin->reported[plugin->reported_count++];
     record->kind = WEIVEL_REACH_SERVICE;
     record->plugin = plugin->handle;
     record->id = copy;
+    record->sequence = registry->next_report++;
     return record;
 }
 
@@ -42,7 +43,7 @@ static void report_once(weivel_core *core, weivel_plugin *plugin, const char *id
     }
     if (weivel_table_add_text(plugin->reported_services, record->id, record->id) != WEIVEL_STATUS_OK) {
         free(record->id);
-        core->registry->reported_count--;
+        plugin->reported_count--;
         return;
     }
     weivel_events_push_reach(core->events, WEIVEL_REACH_SERVICE, plugin->handle, id, reach->code, reach->detail,
@@ -88,9 +89,8 @@ void weivel_reach_check(weivel_core *core, weivel_plugin *plugin, const char *id
 
 void weivel_reach_log_late(weivel_core *core, const weivel_plugin *plugin, const char *what, const char *id) {
     char text[512];
-    const char *name = plugin->identity != NULL ? plugin->identity : plugin->manifest.value.import_name;
     snprintf(text, sizeof text, "ignored a late %s of service \"%s\" from %s, which is no longer running", what, id,
-             name);
+             plugin->identity);
     weivel_core_log(core, WEIVEL_LOG_WARNING, text);
 }
 
@@ -102,10 +102,10 @@ void weivel_reach_stopped(const char *id, weivel_reach *reach) {
              "provide \"%s\" before this plugin is stopped, or get it and carry on without it", id);
 }
 
-uint32_t weivel_reach_reported_count(const weivel_core *core) {
-    return core->registry->reported_count;
+uint32_t weivel_reach_reported_count(const weivel_plugin *plugin) {
+    return plugin->reported_count;
 }
 
-const weivel_reach_record *weivel_reach_reported_at(const weivel_core *core, uint32_t index) {
-    return index < core->registry->reported_count ? &core->registry->reported[index] : NULL;
+const weivel_reach_record *weivel_reach_reported_at(const weivel_plugin *plugin, uint32_t index) {
+    return index < plugin->reported_count ? &plugin->reported[index] : NULL;
 }

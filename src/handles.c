@@ -18,6 +18,7 @@ struct weivel_handles {
     uint32_t count;
     uint32_t capacity;
     uint32_t first_free;
+    uint32_t live;
 };
 
 static uint32_t slot_of(weivel_handle handle) {
@@ -90,7 +91,16 @@ weivel_status weivel_handles_allocate(weivel_handles *handles, uint32_t kind, vo
     entry->record = record;
     entry->next_free = NO_FREE_SLOT;
     *handle = handle_for(slot, entry->generation);
+    handles->live++;
     return WEIVEL_STATUS_OK;
+}
+
+uint32_t weivel_handles_live(const weivel_handles *handles) {
+    return handles->live;
+}
+
+uint32_t weivel_handles_slots(const weivel_handles *handles) {
+    return handles->count;
 }
 
 static handle_slot *live_slot(const weivel_handles *handles, weivel_handle handle, uint32_t kind) {
@@ -119,6 +129,7 @@ weivel_status weivel_handles_release(weivel_handles *handles, weivel_handle hand
     }
     entry->occupied = false;
     entry->record = NULL;
+    handles->live--;
     entry->generation = weivel_handles_next_generation(entry->generation);
     if (entry->generation != 0) {
         entry->next_free = handles->first_free;

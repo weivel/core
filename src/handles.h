@@ -21,6 +21,10 @@ weivel_status weivel_handles_allocate(weivel_handles *handles, uint32_t kind, vo
 weivel_status weivel_handles_resolve(const weivel_handles *handles, weivel_handle handle, uint32_t kind,
                                      void **record);
 
+/** How many handles are live, and how many slots the table has ever made, for a test of churn. */
+uint32_t weivel_handles_live(const weivel_handles *handles);
+uint32_t weivel_handles_slots(const weivel_handles *handles);
+
 /** Ends a handle; WEIVEL_STATUS_REFUSED when it does not resolve as `kind`. */
 weivel_status weivel_handles_release(weivel_handles *handles, weivel_handle handle, uint32_t kind);
 

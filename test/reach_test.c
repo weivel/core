@@ -3,6 +3,7 @@
 #include <string.h>
 #include <weivel/core.h>
 
+#include "core_internal.h"
 #include "registry.h"
 #include "registry_support.h"
 
@@ -104,14 +105,41 @@ static void perform(weivel_core *core, const weivel_handle *plugins, const step 
     record->journal_to = the_journal.count;
 }
 
+static const weivel_plugin *record_of(weivel_core *core, weivel_handle handle) {
+    void *record = NULL;
+    CHECK(weivel_handles_resolve(core->handles, handle, WEIVEL_RECORD_PLUGIN, &record) == WEIVEL_STATUS_OK);
+    return record;
+}
+
 static bool reported(weivel_core *core, weivel_handle plugin, const char *id) {
-    for (uint32_t index = 0; index < weivel_reach_reported_count(core); index++) {
-        const weivel_reach_record *record = weivel_reach_reported_at(core, index);
-        if (record->plugin == plugin && strcmp(record->id, id) == 0) {
+    const weivel_plugin *record = record_of(core, plugin);
+    for (uint32_t index = 0; record != NULL && index < weivel_reach_reported_count(record); index++) {
+        if (strcmp(weivel_reach_reported_at(record, index)->id, id) == 0) {
             return true;
         }
     }
     return false;
+}
+
+static int by_sequence(const void *left, const void *right) {
+    uint64_t first = (*(const weivel_reach_record *const *)left)->sequence;
+    uint64_t second = (*(const weivel_reach_record *const *)right)->sequence;
+    return first < second ? -1 : first > second;
+}
+
+/** Every plugin's reported refusals, merged into the order they were reported. */
+static uint32_t all_reported(weivel_core *core, const weivel_handle *plugins, uint32_t count,
+                             const weivel_reach_record **into, uint32_t capacity) {
+    uint32_t total = 0;
+    for (uint32_t plugin = 0; plugin < count; plugin++) {
+        const weivel_plugin *record = record_of(core, plugins[plugin]);
+        for (uint32_t index = 0; record != NULL && index < weivel_reach_reported_count(record) && total < capacity;
+             index++) {
+            into[total++] = weivel_reach_reported_at(record, index);
+        }
+    }
+    qsort((void *)into, total, sizeof into[0], by_sequence);
+    return total;
 }
 
 static const char *outcome_of(weivel_core *core, const weivel_handle *plugins, const step_record *record) {
@@ -177,8 +205,10 @@ static void answer_of(weivel_core *core, const reach_vector *vector, const weive
     }
     used = 0;
     answer->reported[0] = '\0';
-    for (uint32_t index = 0; index < weivel_reach_reported_count(core); index++) {
-        const weivel_reach_record *record = weivel_reach_reported_at(core, index);
+    const weivel_reach_record *records_reported[16];
+    uint32_t reported_count = all_reported(core, plugins, plugin_count(vector), records_reported, 16);
+    for (uint32_t index = 0; index < reported_count; index++) {
+        const weivel_reach_record *record = records_reported[index];
         const char *name = "?";
         for (uint32_t plugin = 0; plugin < plugin_count(vector); plugin++) {
             if (plugins[plugin] == record->plugin) {
@@ -466,7 +496,7 @@ static void late_calls_are_logged_and_never_reported(void) {
     CHECK(count_kind(WEIVEL_EVENT_LOG) == 3);
     CHECK(count_kind(WEIVEL_EVENT_REFUSAL) == 0);
     CHECK(count_kind(WEIVEL_EVENT_REACH_REFUSED) == 0);
-    CHECK(weivel_reach_reported_count(core) == 0);
+    CHECK(weivel_reach_reported_count(record_of(core, plugin)) == 0);
     check_text(nth_of(WEIVEL_EVENT_LOG, 0)->detail,
                "ignored a late watch of service \"calendar:events\" from notes, which is no longer running", "log");
     check_text(nth_of(WEIVEL_EVENT_LOG, 1)->detail,
