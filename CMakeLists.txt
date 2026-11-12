@@ -38,6 +38,7 @@ set(WEIVEL_CORE_SOURCES
     src/sized.c
     src/supports.c
     src/table.c
+    src/text.c
     src/waiting.c)
 
 function(weivel_core_target target)

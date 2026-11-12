@@ -1,12 +1,12 @@
 #include "capabilities.h"
 
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "core_internal.h"
 #include "sized.h"
+#include "text.h"
 
 weivel_capabilities *weivel_capabilities_create(void) {
     weivel_capabilities *capabilities = calloc(1, sizeof *capabilities);
@@ -114,28 +114,12 @@ static void tell_watchers(weivel_core *core, const weivel_provision *provision, 
     }
 }
 
-/** Formats into an allocation of exactly the size needed, so a long id is never cut; NULL when memory runs out. */
-static char *formatted(const char *format, ...) {
-    va_list arguments;
-    va_start(arguments, format);
-    va_list measuring;
-    va_copy(measuring, arguments);
-    int length = vsnprintf(NULL, 0, format, measuring);
-    va_end(measuring);
-    char *text = length < 0 ? NULL : malloc((size_t)length + 1);
-    if (text != NULL) {
-        vsnprintf(text, (size_t)length + 1, format, arguments);
-    }
-    va_end(arguments);
-    return text;
-}
-
 static bool is_id(const char *id) {
     return id != NULL && id[0] != '\0';
 }
 
 static weivel_status refuse_provided_twice(weivel_core *core, const char *id) {
-    char *detail = formatted("provided capability \"%s\" twice", id);
+    char *detail = weivel_text_format("provided capability \"%s\" twice", id);
     if (detail == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -313,7 +297,7 @@ static void admit(weivel_core *core, weivel_plugin *plugin) {
 
 static weivel_status refuse_not_open(weivel_core *core, const weivel_plugin *plugin) {
     bool released = plugin->state == WEIVEL_PLUGIN_RELEASED;
-    char *detail = formatted("the plugin \"%s\" %s", plugin->manifest.value.import_name,
+    char *detail = weivel_text_format("the plugin \"%s\" %s", plugin->manifest.value.import_name,
                              released ? "was released" : "is quarantined");
     if (detail == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;

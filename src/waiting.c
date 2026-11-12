@@ -69,6 +69,7 @@ void weivel_waiting_arrival(weivel_core *core, weivel_slot *slot) {
             weivel_reach mismatch;
             weivel_reach_refuse_provider(core, want->consumer, slot->id, want->provider,
                                          weivel_registry_owner_name(registration), &mismatch);
+            weivel_reach_dispose(&mismatch);
         }
         link = next;
     }
@@ -154,6 +155,7 @@ static weivel_status decide(weivel_core *core, weivel_want *want, const char *id
         weivel_reach stopped;
         weivel_reach_stopped(id, &stopped);
         weivel_waiting_reject(core, want, WEIVEL_REFUSAL_STOPPED, stopped.detail, stopped.fix);
+        weivel_reach_dispose(&stopped);
         return WEIVEL_STATUS_OK;
     }
     if (weivel_constraints_apply(reach->wanted)) {
@@ -185,6 +187,7 @@ static weivel_status want_service(weivel_core *core, weivel_handle consumer, con
     }
     weivel_want *want = new_want(core, plugin, slot);
     if (want == NULL) {
+        weivel_reach_dispose(&reach);
         if (slot != NULL) {
             weivel_registry_release_slot(core->registry, slot);
         }
@@ -193,6 +196,7 @@ static weivel_status want_service(weivel_core *core, weivel_handle consumer, con
     want->provider = reach.provider;
     weivel_handle answered = want->handle;
     status = decide(core, want, id, &reach, options);
+    weivel_reach_dispose(&reach);
     if (status != WEIVEL_STATUS_OK) {
         weivel_waiting_withdraw(core, want);
         return status;

@@ -221,6 +221,7 @@ void weivel_registry_strip(weivel_core *core, weivel_plugin *plugin) {
         weivel_reach stopped;
         weivel_reach_stopped(want->slot->id, &stopped);
         weivel_waiting_reject(core, want, WEIVEL_REFUSAL_STOPPED, stopped.detail, stopped.fix);
+        weivel_reach_dispose(&stopped);
     }
     while (!weivel_list_empty(&plugin->holdings)) {
         revoke_holding(core, WEIVEL_RECORD_OF(plugin->holdings.next, weivel_holding, by_plugin));
@@ -431,6 +432,7 @@ static weivel_status get_service(weivel_core *core, weivel_handle consumer, cons
     }
     weivel_reach reach;
     weivel_reach_check(core, plugin, id, &reach);
+    weivel_reach_dispose(&reach);
     if (reach.code != WEIVEL_REFUSAL_NONE) {
         return WEIVEL_STATUS_REFUSED;
     }
@@ -500,6 +502,7 @@ static weivel_status watch_service(weivel_core *core, weivel_handle consumer, co
     }
     weivel_reach reach;
     weivel_reach_check(core, plugin, id, &reach);
+    weivel_reach_dispose(&reach);
     if (reach.code != WEIVEL_REFUSAL_NONE) {
         return WEIVEL_STATUS_REFUSED;
     }
