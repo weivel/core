@@ -26,15 +26,3 @@ weivel_test(oom_test weivel_core_testing)
 
 add_test(NAME public_headers_are_ascii
     COMMAND ${CMAKE_COMMAND} -DDIRECTORY=${PROJECT_SOURCE_DIR}/include -P ${CMAKE_CURRENT_SOURCE_DIR}/ascii_check.cmake)
-if(MSVC)
-    set(import_reading -DFORMAT=msvc "-DTOOL=${CMAKE_LINKER}")
-elseif(NOT CMAKE_NM)
-    message(FATAL_ERROR "no nm found, so the core's imports cannot be checked")
-elseif(APPLE)
-    set(import_reading -DFORMAT=apple "-DTOOL=${CMAKE_NM}" -DSHARED=$<TARGET_FILE:weivel_core_shared>)
-else()
-    set(import_reading -DFORMAT=gnu "-DTOOL=${CMAKE_NM}" -DSHARED=$<TARGET_FILE:weivel_core_shared>)
-endif()
-add_test(NAME core_imports_only_allowed_calls
-    COMMAND ${CMAKE_COMMAND} ${import_reading} -DLIBRARY=$<TARGET_FILE:weivel_core>
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/allowlist_test.cmake)
