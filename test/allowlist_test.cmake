@@ -1,5 +1,7 @@
 # -DFORMAT=msvc|gnu|apple -DTOOL=<link.exe or nm> -DLIBRARY=<static library> [-DSHARED=<shared library>]
 # Fails on any symbol the core imports that is not on the allow-list below.
+# Every toolchain name on it was seen in a real listing on the MSVC, glibc or Apple runner; a name added later
+# carries the same proof.
 
 cmake_policy(VERSION 3.15)
 
@@ -13,17 +15,12 @@ set(allowed_from_msvc_inline_snprintf
     __stdio_common_vsprintf "?_OptionsStorage@?1??__local_stdio_printf_options@@9@9")
 set(allowed_from_msvc_debug_runtime_checks _RTC_CheckStackVars _RTC_InitBase _RTC_Shutdown)
 set(allowed_from_msvc_buffer_security_check __security_check_cookie __security_cookie __GSHandlerCheck)
-set(allowed_from_msvc_stack_probe __chkstk)
 set(allowed_from_the_stack_protector __stack_chk_fail __stack_chk_guard)
-set(allowed_from_position_independent_code _GLOBAL_OFFSET_TABLE_)
-set(allowed_from_fortified_allowed_calls
-    __memcpy_chk __memmove_chk __memset_chk __snprintf_chk __vsnprintf_chk __strlen_chk)
-set(allowed_from_apple_memset_lowering bzero __bzero)
+set(allowed_from_fortified_allowed_calls __memcpy_chk __memmove_chk __memset_chk __snprintf_chk)
 set(allowed_from_the_toolchain
     ${allowed_from_msvc_inline_snprintf} ${allowed_from_msvc_debug_runtime_checks}
-    ${allowed_from_msvc_buffer_security_check} ${allowed_from_msvc_stack_probe} ${allowed_from_the_stack_protector}
-    ${allowed_from_position_independent_code} ${allowed_from_fortified_allowed_calls}
-    ${allowed_from_apple_memset_lowering})
+    ${allowed_from_msvc_buffer_security_check} ${allowed_from_the_stack_protector}
+    ${allowed_from_fortified_allowed_calls})
 
 set(allowed_in_the_mutex_only
     InitializeSRWLock AcquireSRWLockExclusive ReleaseSRWLockExclusive
@@ -31,8 +28,7 @@ set(allowed_in_the_mutex_only
 
 set(allowed_from_glibc_shared_library_startup
     __cxa_finalize _ITM_deregisterTMCloneTable _ITM_registerTMCloneTable __gmon_start__)
-set(allowed_from_the_mach_o_lazy_binder dyld_stub_binder)
-set(allowed_in_a_shared_library ${allowed_from_glibc_shared_library_startup} ${allowed_from_the_mach_o_lazy_binder})
+set(allowed_in_a_shared_library ${allowed_from_glibc_shared_library_startup})
 
 set(mutex_marker weivel_mutex_lock)
 
