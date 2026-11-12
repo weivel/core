@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <weivel/core.h>
 
+#include "ledger.h"
 #include "list.h"
 #include "manifest.h"
 #include "table.h"
@@ -74,6 +75,15 @@ typedef struct weivel_plugin {
     weivel_link provisions;
     weivel_link capability_watches;
     weivel_link capability_holdings;
+    /** Its place among the plugins in the order they were registered, which the ledger's rows keep. */
+    weivel_link in_order;
+    /** What the ledger records of its current, or last, activation. */
+    weivel_ids services_provided;
+    weivel_ids capabilities_provided;
+    weivel_ids services_consumed;
+    bool verified;
+    /** The refusal verification last answered its activation since it was opened. */
+    weivel_kept_refusal activation_refusal;
 } weivel_plugin;
 
 /** Every plugin record one core owns; the handle table only borrows them. */
@@ -92,5 +102,8 @@ weivel_plugin *weivel_plugins_with_identity(const weivel_plugins *plugins, const
 
 /** How many plugin records the collection holds, released ones included until they are forgotten. */
 uint32_t weivel_plugins_count(const weivel_plugins *plugins);
+
+/** The head of the list of every plugin record, chained by `in_order` in the order they were registered. */
+const weivel_link *weivel_plugins_in_order(const weivel_plugins *plugins);
 
 #endif

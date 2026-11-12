@@ -159,6 +159,7 @@ static weivel_status add_provision(weivel_core *core, weivel_plugin *plugin, con
     weivel_list_append(&plugin->provisions, &provision->by_provider);
     capabilities->provision_count++;
     *implementation = provision->handle;
+    weivel_ledger_note(core, plugin, WEIVEL_RELATIONSHIP_CAPABILITY_PROVIDED, capability->id);
     return WEIVEL_STATUS_OK;
 }
 
@@ -246,7 +247,7 @@ static size_t find_extra(const weivel_plugin *plugin, weivel_mismatch *mismatch,
 }
 
 /** Joins what `missing` or extra ids a plugin's activation has into one refusal naming the first in its fix. */
-static weivel_status refuse_mismatch(weivel_core *core, const weivel_plugin *plugin, bool missing, size_t length) {
+static weivel_status refuse_mismatch(weivel_core *core, weivel_plugin *plugin, bool missing, size_t length) {
     const char *what =
         missing ? "capabilities declared but never provided: " : "capabilities provided but never declared: ";
     size_t prefix = strlen(what);
@@ -277,6 +278,7 @@ static weivel_status refuse_mismatch(weivel_core *core, const weivel_plugin *plu
                  "add \"%s\" to the capabilities it provides in its manifest, or stop providing \"%s\"",
                  mismatch.first, mismatch.first);
     }
+    weivel_ledger_note_refused_activation(core, plugin, WEIVEL_REFUSAL_ACTIVATION_MISMATCH, detail, fix);
     weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_ACTIVATION_MISMATCH, detail, fix);
     free(fix);
     free(detail);
@@ -329,6 +331,7 @@ static weivel_status verify(weivel_core *core, weivel_handle handle) {
         return refuse_mismatch(core, plugin, false, length);
     }
     admit(core, plugin);
+    weivel_ledger_note_verified(plugin);
     return WEIVEL_STATUS_OK;
 }
 

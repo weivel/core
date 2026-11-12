@@ -54,6 +54,8 @@ typedef enum weivel_record_kind {
 #define WEIVEL_CAPACITY_FIRST_SIZE (offsetof(weivel_capacity, serves) + sizeof(uint32_t))
 #define WEIVEL_SERVICE_LIST_FIRST_SIZE (offsetof(weivel_service_list, storage) + sizeof(void *))
 #define WEIVEL_CAPABILITY_LIST_FIRST_SIZE (offsetof(weivel_capability_list, storage) + sizeof(void *))
+#define WEIVEL_LEDGER_ROW_FIRST_SIZE (offsetof(weivel_ledger_row, storage) + sizeof(void *))
+#define WEIVEL_LEDGER_SNAPSHOT_FIRST_SIZE (offsetof(weivel_ledger_snapshot, storage) + sizeof(void *))
 
 /** Queues a log event when `level` reaches the core's minimum. Called with the core's mutex held. */
 void weivel_core_log(weivel_core *core, uint32_t level, const char *text);

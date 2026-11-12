@@ -202,6 +202,9 @@ static weivel_status want_service(weivel_core *core, weivel_handle consumer, con
         return status;
     }
     *handle = answered;
+    if (reach.code == WEIVEL_REFUSAL_NONE && !reach.late) {
+        weivel_ledger_note(core, plugin, WEIVEL_RELATIONSHIP_SERVICE_CONSUMED, id);
+    }
     return WEIVEL_STATUS_OK;
 }
 
