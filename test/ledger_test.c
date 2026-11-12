@@ -1,3 +1,4 @@
+#include "core_internal.h"
 #include "registry_support.h"
 
 /** A plugin as the ledger tests need one: services, capabilities and permissions, each list NULL-terminated. */
@@ -522,6 +523,33 @@ static void diagnostics_are_log_events_and_none_is_lost_as_the_queue_grows(void)
     weivel_core_destroy(core);
 }
 
+static void the_core_logs_at_every_level(void) {
+    weivel_core *core = core_logging_everything(0);
+    next_log(core, WEIVEL_LOG_DEBUG, "core created");
+    ledger_spec provider_spec = {.import_name = "calendar", .provides = {"calendar:events"}};
+    ledger_spec consumer_spec = {.import_name = "notes", .consumes = {"calendar:events"}};
+    weivel_handle provider = open_ledger_spec(core, &provider_spec);
+    weivel_handle consumer = open_ledger_spec(core, &consumer_spec);
+    weivel_quarantine_reason reason = WEIVEL_INIT(weivel_quarantine_reason);
+    reason.detail = "its activation threw";
+    reason.fix = "mend it";
+    CHECK(weivel_quarantine_plugin(core, consumer, &reason, NULL) == WEIVEL_STATUS_OK);
+    next_log(core, WEIVEL_LOG_INFO, "quarantined the plugin \"notes\": its activation threw");
+    weivel_handle watch = 0;
+    CHECK(weivel_watch_service(core, consumer, "calendar:events", &watch, NULL) == WEIVEL_STATUS_REFUSED);
+    next_log(core, WEIVEL_LOG_WARNING, "ignored a late watch of service \"calendar:events\"");
+    CHECK(weivel_open_plugin(core, consumer, NULL, NULL) == WEIVEL_STATUS_OK);
+    weivel_handle want = 0;
+    CHECK(weivel_want_service(core, consumer, "calendar:events", NULL, &want, NULL) == WEIVEL_STATUS_OK);
+    core->registry->fail_next_holding = true;
+    weivel_handle registration = 0;
+    CHECK(weivel_register_service(core, provider, "calendar:events", &registration, NULL) == WEIVEL_STATUS_OK);
+    next_log(core, WEIVEL_LOG_ERROR, "memory ran out settling a want, so it still waits");
+    weivel_event event = WEIVEL_INIT(weivel_event);
+    CHECK(weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_NONE);
+    weivel_core_destroy(core);
+}
+
 int main(void) {
     lists_each_plugin_in_registration_order_with_what_it_declared();
     records_what_each_activation_provided_and_consumed();
@@ -535,5 +563,6 @@ int main(void) {
     malformed_ledger_calls_are_answered_as_values();
     a_larger_row_is_written_only_as_far_as_the_core_knows();
     diagnostics_are_log_events_and_none_is_lost_as_the_queue_grows();
+    the_core_logs_at_every_level();
     return check_summary("ledger_test");
 }
