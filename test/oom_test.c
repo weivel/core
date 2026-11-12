@@ -527,6 +527,46 @@ static weivel_status register_a_manifest(world *made) {
     return weivel_register_manifest(made->core, &manifest, &plugin, NULL);
 }
 
+static weivel_status register_a_malformed_manifest(world *made) {
+    const char *twice[2] = {"screens", "screens"};
+    weivel_manifest manifest = WEIVEL_INIT(weivel_manifest);
+    manifest.import_name = "doubled";
+    manifest.capabilities.provides.items = twice;
+    manifest.capabilities.provides.count = 2;
+    weivel_handle plugin = 0;
+    return weivel_register_manifest(made->core, &manifest, &plugin, NULL);
+}
+
+/** Asking whether a malformed manifest is supported answers its whole refusal, or out of memory, never less. */
+static void supports_answers_a_whole_refusal_or_none(void) {
+    const char *twice[2] = {"screens", "screens"};
+    weivel_manifest manifest = WEIVEL_INIT(weivel_manifest);
+    manifest.import_name = "doubled";
+    manifest.capabilities.provides.items = twice;
+    manifest.capabilities.provides.count = 2;
+    world made;
+    make_world(&made);
+    uint32_t points = 0;
+    for (uint64_t nth = 1; nth < 1000; nth++) {
+        weivel_support answer = WEIVEL_INIT(weivel_support);
+        weivel_memory_fail_at(nth);
+        weivel_status status = weivel_supports(made.core, &manifest, &answer, NULL);
+        bool failed = weivel_memory_failed();
+        weivel_memory_fail_at(0);
+        bool whole = status == WEIVEL_STATUS_OK && answer.refusal.code == WEIVEL_REFUSAL_MALFORMED_MANIFEST &&
+                     strstr(answer.refusal.detail, "twice") != NULL && answer.refusal.fix[0] != '\0';
+        CHECK(whole || (status == WEIVEL_STATUS_OUT_OF_MEMORY && answer.storage == NULL));
+        weivel_support_release(&answer);
+        if (!failed) {
+            CHECK(whole);
+            break;
+        }
+        points++;
+    }
+    weivel_core_destroy(made.core);
+    printf("supports of a malformed manifest: %u allocations, each failing whole or not at all\n", (unsigned)points);
+}
+
 static void world_with_a_served_question(world *made) {
     world_with_registration(made);
     weivel_want_options options = WEIVEL_INIT(weivel_want_options);
@@ -550,6 +590,8 @@ static weivel_status picky_is_served(world *made) {
 
 int main(void) {
     sweep("register a manifest", make_world, register_a_manifest);
+    sweep("register a malformed manifest", make_world, register_a_malformed_manifest);
+    supports_answers_a_whole_refusal_or_none();
     sweep("get a registered service", world_with_registration, notes_get);
     sweep("want a registered service", world_with_registration, notes_want);
     sweep("want, timed, with nothing registered", make_world, notes_want_timed);

@@ -34,8 +34,9 @@ typedef struct weivel_owned_manifest {
 
 /**
  * Checks a caller's manifest, whose size the caller has checked against WEIVEL_MANIFEST_FIRST_SIZE, and copies it.
- * WEIVEL_STATUS_REFUSED with `problem` filled when its shape is wrong, WEIVEL_STATUS_OUT_OF_MEMORY, or
- * WEIVEL_STATUS_OK with `owned` to be passed to weivel_manifest_free.
+ * WEIVEL_STATUS_REFUSED with both texts of `problem` filled when its shape is wrong, WEIVEL_STATUS_OUT_OF_MEMORY,
+ * with nothing to free, when memory runs out copying it or describing its problem, or WEIVEL_STATUS_OK with `owned`
+ * to be passed to weivel_manifest_free.
  */
 weivel_status weivel_manifest_copy(const weivel_manifest *callers, weivel_owned_manifest *owned,
                                    weivel_manifest_problem *problem);

@@ -40,7 +40,8 @@
  *   monotonic scale the caller chooses. The core answers its next deadline and acts on time only in
  *   weivel_advance.
  * - Threads. Every call taking a core may be made from any thread; one lock inside the core serialises them and
- *   is never held while anything outside the core runs.
+ *   is never held while anything outside the core runs. One thread drains the queue: events come out in the order
+ *   they happened, and two threads draining at once would split that order between them.
  * - Enums. Enumerations travel in struct fields as uint32_t, so their width never depends on the compiler.
  */
 
@@ -1219,7 +1220,7 @@ typedef enum weivel_plugin_status {
  * - `services_provided`: each service id it registered; `capabilities_provided`: each capability it provided,
  *   verified or not.
  * - `services_consumed`: each service id it asked for by a get, a want or a watch its reach allowed, answered or
- *   not.
+ *   not; `capabilities_consumed`, appended after `storage`, likewise each capability id by an `all` or a watch.
  *
  * Every text and list lives in `storage`, private to the core, until weivel_ledger_row_release; in a row a
  * weivel_ledger_snapshot carries, `storage` is NULL and the snapshot owns everything.

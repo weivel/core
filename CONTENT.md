@@ -26,6 +26,8 @@ no pointer into anything it handed out, and the caller keeps no pointer into the
 Every call that takes a core may be made from any thread. One lock inside each core serialises the calls, and it is
 never held while anything outside the core runs, which is why it cannot deadlock: the core never calls out. Two cores
 share nothing. Creating and destroying a core are the only calls that must not overlap another call on the same core.
+One thread drains the queue, since the events come out in the order they happened and two threads draining at once
+would split that order between them.
 
 ## Events and time
 
@@ -52,9 +54,11 @@ element declares.
 ## The ledger
 
 The ledger answers every plugin registered and not forgotten: its handle, import name and identity, where it is in
-its life, what its manifest declares, every relationship its current or last activation made, and the refusal that
-quarantined it when verification refused its activation. It also answers every refusal of reach reported for those
-plugins, in the order they were reported. A forgotten plugin leaves no trace in it.
+its life, what its manifest declares, every relationship its current or last activation made (the services and
+capabilities it provided and consumed), and, for a quarantined plugin, why: the reason the caller gave when it
+quarantined it, or else the refusal verification answered its activation. It also answers every refusal of reach
+reported for those plugins, each with its code, in the order they were reported. A forgotten plugin leaves no trace
+in it.
 
 ## Still to come
 
