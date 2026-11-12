@@ -274,6 +274,15 @@ static weivel_status refuse_taken(weivel_core *core, const weivel_registration *
     return WEIVEL_STATUS_REFUSED;
 }
 
+/** What a plugin's manifest advertises for an id it provides, NULL when it advertises nothing for it. */
+static const weivel_numbers *advertised_by(const weivel_plugin *owner, const char *id) {
+    const weivel_declaration *declaration = owner == NULL ? NULL : weivel_table_find_text(owner->declared, id);
+    if (declaration == NULL || declaration->offered == NULL || declaration->offered->attributes.count == 0) {
+        return NULL;
+    }
+    return &declaration->offered->attributes;
+}
+
 static weivel_status add_registration(weivel_core *core, weivel_plugin *owner, weivel_slot *slot,
                                       weivel_handle *handle) {
     weivel_registration *registration = calloc(1, sizeof *registration);
@@ -288,6 +297,7 @@ static weivel_status add_registration(weivel_core *core, weivel_plugin *owner, w
     }
     registration->slot = slot;
     registration->owner = owner;
+    registration->advertised = advertised_by(owner, slot->id);
     weivel_list_init(&registration->holdings);
     weivel_list_init(&registration->by_owner);
     if (owner != NULL) {

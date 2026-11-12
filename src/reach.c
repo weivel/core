@@ -78,6 +78,7 @@ void weivel_reach_check(weivel_core *core, weivel_plugin *plugin, const char *id
         return;
     }
     reach->provider = declaration->provider;
+    reach->wanted = declaration->wanted;
     const weivel_slot *slot = weivel_registry_find(core->registry, id);
     const weivel_registration *owner = slot == NULL ? NULL : slot->registration;
     if (owner != NULL && !weivel_registry_accepts(reach->provider, owner)) {

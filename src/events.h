@@ -37,6 +37,10 @@ weivel_status weivel_events_push_want(weivel_events *events, const weivel_want_e
 weivel_status weivel_events_push_watch(weivel_events *events, const weivel_watch_event *heard);
 weivel_status weivel_events_push_revoked(weivel_events *events, const weivel_revoked_event *revoked);
 
+/** Queues a capacity question, copying `constraints`, which may be NULL for none, into the event's storage. */
+weivel_status weivel_events_push_capacity(weivel_events *events, const weivel_capacity_event *asked,
+                                          const weivel_numbers *constraints);
+
 /** Queues a reported refusal of reach, copying `id` and both texts. */
 weivel_status weivel_events_push_reach(weivel_events *events, uint32_t kind, weivel_handle plugin, const char *id,
                                        uint32_t code, const char *detail, const char *fix);

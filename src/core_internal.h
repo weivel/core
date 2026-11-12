@@ -5,6 +5,7 @@
 #include <weivel/core.h>
 
 #include "compatibility.h"
+#include "constraints.h"
 #include "deadlines.h"
 #include "events.h"
 #include "handles.h"
@@ -27,6 +28,8 @@ struct weivel_core {
     /** The ids any plugin may register, copied into `well_known_storage`. */
     weivel_strings well_known;
     void *well_known_storage;
+    /** The constraint vocabulary the options gave, copied. */
+    weivel_vocabulary vocabulary;
 };
 
 /** The kind of record each handle names. */
@@ -44,6 +47,7 @@ typedef enum weivel_record_kind {
 #define WEIVEL_ACTIVATION_PLAN_FIRST_SIZE (offsetof(weivel_activation_plan, storage) + sizeof(void *))
 #define WEIVEL_PLUGIN_OPTIONS_FIRST_SIZE (offsetof(weivel_plugin_options, payload) + sizeof(uint64_t))
 #define WEIVEL_WANT_OPTIONS_FIRST_SIZE (offsetof(weivel_want_options, timeout_millis) + sizeof(int64_t))
+#define WEIVEL_CAPACITY_FIRST_SIZE (offsetof(weivel_capacity, serves) + sizeof(uint32_t))
 #define WEIVEL_SERVICE_LIST_FIRST_SIZE (offsetof(weivel_service_list, storage) + sizeof(void *))
 
 /** Queues a log event when `level` reaches the core's minimum. Called with the core's mutex held. */

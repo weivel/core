@@ -3,11 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "constraints.h"
 #include "core_internal.h"
 #include "registry.h"
 #include "sized.h"
 
 void weivel_waiting_free(weivel_want *want) {
+    weivel_constraints_free(want->constrained);
     free(want);
 }
 
@@ -15,22 +17,26 @@ void weivel_waiting_free(weivel_want *want) {
 static void retire(weivel_core *core, weivel_want *want) {
     weivel_list_remove(&want->by_slot);
     weivel_list_remove(&want->by_consumer);
-    if (want->timed) {
+    if (want->timed || want->constrained != NULL) {
         weivel_deadlines_cancel(core->deadlines, want->handle);
     }
+    weivel_constraints_free(want->constrained);
+    want->constrained = NULL;
     weivel_handles_release(core->handles, want->handle, WEIVEL_RECORD_WANT);
     if (want->slot != NULL) {
         weivel_registry_release_slot(core->registry, want->slot);
     }
 }
 
-weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration) {
+weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration,
+                                    bool degraded) {
     weivel_status status = weivel_registry_hold(core, registration, want->consumer);
     if (status != WEIVEL_STATUS_OK) {
         return status;
     }
     retire(core, want);
-    weivel_want_event settled = {want->handle, want->consumer->handle, registration->handle, {0, NULL, NULL}};
+    weivel_want_event settled = {want->handle, want->consumer->handle, registration->handle, {0, NULL, NULL},
+                                 degraded ? 1u : 0u};
     weivel_events_push_want(core->events, &settled, NULL, NULL);
     free(want);
     return WEIVEL_STATUS_OK;
@@ -38,7 +44,7 @@ weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel
 
 void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, const char *detail, const char *fix) {
     retire(core, want);
-    weivel_want_event rejected = {want->handle, want->consumer->handle, 0, {code, NULL, NULL}};
+    weivel_want_event rejected = {want->handle, want->consumer->handle, 0, {code, NULL, NULL}, 0};
     weivel_events_push_want(core->events, &rejected, detail, fix);
     free(want);
 }
@@ -55,8 +61,12 @@ void weivel_waiting_arrival(weivel_core *core, weivel_slot *slot) {
     while (link != head) {
         weivel_link *next = link->next;
         weivel_want *want = WEIVEL_RECORD_OF(link, weivel_want, by_slot);
+        if (want->constrained != NULL) {
+            link = next;
+            continue;
+        }
         if (weivel_registry_accepts(want->provider, registration)) {
-            if (weivel_waiting_settle(core, want, registration) != WEIVEL_STATUS_OK) {
+            if (weivel_waiting_settle(core, want, registration, false) != WEIVEL_STATUS_OK) {
                 weivel_core_log(core, WEIVEL_LOG_ERROR, "memory ran out settling a want, so it still waits");
             }
         } else {
@@ -68,13 +78,7 @@ void weivel_waiting_arrival(weivel_core *core, weivel_slot *slot) {
     }
 }
 
-void weivel_waiting_time_out(weivel_core *core, weivel_handle subject) {
-    void *record;
-    if (weivel_handles_resolve(core->handles, subject, WEIVEL_RECORD_WANT, &record) != WEIVEL_STATUS_OK) {
-        return;
-    }
-    weivel_want *want = record;
-    want->timed = false;
+static void time_out(weivel_core *core, weivel_want *want) {
     char detail[384];
     char fix[384];
     snprintf(detail, sizeof detail, "waited %" PRId64 "ms for service \"%s\" and nothing registered it",
@@ -82,6 +86,20 @@ void weivel_waiting_time_out(weivel_core *core, weivel_handle subject) {
     snprintf(fix, sizeof fix, "install a plugin that provides \"%s\", or get it and carry on without it",
              want->slot->id);
     weivel_waiting_reject(core, want, WEIVEL_REFUSAL_TIMED_OUT, detail, fix);
+}
+
+void weivel_waiting_due(weivel_core *core, weivel_handle subject, int64_t now) {
+    void *record;
+    if (weivel_handles_resolve(core->handles, subject, WEIVEL_RECORD_WANT, &record) != WEIVEL_STATUS_OK) {
+        weivel_deadlines_cancel(core->deadlines, subject);
+        return;
+    }
+    weivel_want *want = record;
+    if (want->constrained != NULL) {
+        weivel_constraints_due(core, want, now);
+    } else {
+        time_out(core, want);
+    }
 }
 
 static weivel_want *new_want(weivel_core *core, weivel_plugin *plugin, weivel_slot *slot) {
@@ -131,8 +149,13 @@ static weivel_status decide(weivel_core *core, weivel_want *want, const char *id
         weivel_waiting_reject(core, want, WEIVEL_REFUSAL_STOPPED, stopped.detail, stopped.fix);
         return WEIVEL_STATUS_OK;
     }
+    if (weivel_constraints_apply(reach->wanted)) {
+        weivel_list_append(&want->slot->waiters, &want->by_slot);
+        weivel_list_append(&want->consumer->wants, &want->by_consumer);
+        return weivel_constraints_start(core, want, reach->wanted, options);
+    }
     if (want->slot->registration != NULL) {
-        return weivel_waiting_settle(core, want, want->slot->registration);
+        return weivel_waiting_settle(core, want, want->slot->registration, false);
     }
     return enqueue(core, want, options);
 }
@@ -178,7 +201,11 @@ static bool read_want_options(const weivel_want_options *options, weivel_want_op
     }
     weivel_sized_read(resolved, sizeof *resolved, options);
     bool timed = resolved->timed == WEIVEL_CHOICE_YES;
-    return resolved->timed <= WEIVEL_CHOICE_YES && (!timed || resolved->timeout_millis >= 0);
+    bool budgeted = resolved->budgeted == WEIVEL_CHOICE_YES;
+    bool timeout_valid = !timed || resolved->timeout_millis >= 0;
+    bool budget_valid = !budgeted || (resolved->budget_millis >= 0 && resolved->poll_millis > 0);
+    return resolved->timed <= WEIVEL_CHOICE_YES && resolved->budgeted <= WEIVEL_CHOICE_YES && timeout_valid &&
+           budget_valid;
 }
 
 weivel_status weivel_want_service(weivel_core *core, weivel_handle plugin, const char *id,
@@ -199,10 +226,11 @@ weivel_status weivel_want_service(weivel_core *core, weivel_handle plugin, const
             "pass a non-empty service id and a pointer to a weivel_handle");
     } else if (!read_want_options(options, &resolved)) {
         status = weivel_core_refuse_malformed(
-            core, "weivel_want_service was given options too small, a timed that is no weivel_choice, or a negative "
-                  "timeout",
-            "pass weivel_want_options initialised with WEIVEL_INIT, timed WEIVEL_CHOICE_YES or NO, and a timeout of "
-            "0 or more");
+            core, "weivel_want_service was given options too small, a timed or budgeted that is no weivel_choice, a "
+                  "negative timeout or budget, or a poll interval that is not positive, so the budget would never be "
+                  "spent",
+            "pass weivel_want_options initialised with WEIVEL_INIT, timed and budgeted WEIVEL_CHOICE_YES or NO, a "
+            "timeout and a budget of 0 or more, and a poll interval of 1 or more");
     } else {
         status = want_service(core, plugin, id, &resolved, want);
     }

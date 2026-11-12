@@ -43,6 +43,7 @@ static weivel_core_options resolve_options(const weivel_core_options *options) {
 
 static void free_core(weivel_core *core) {
     weivel_registry_destroy(core->registry);
+    weivel_vocabulary_free(&core->vocabulary);
     weivel_plugins_destroy(core->plugins);
     free(core->well_known_storage);
     free(core->host_storage);
@@ -71,7 +72,10 @@ static weivel_core *allocate_core(const weivel_core_options *options) {
     bool well_known_copied =
         weivel_strings_copy(&options->well_known_services, &core->well_known, &core->well_known_storage);
     core->options.well_known_services = core->well_known;
-    if (!host_copied || !well_known_copied || core->mutex == NULL || core->events == NULL || core->handles == NULL ||
+    bool vocabulary_copied = weivel_vocabulary_copy(&options->constraint_vocabulary, &core->vocabulary);
+    core->options.constraint_vocabulary.items = core->vocabulary.entries;
+    core->options.constraint_vocabulary.count = core->vocabulary.count;
+    if (!host_copied || !well_known_copied || !vocabulary_copied || core->mutex == NULL || core->events == NULL || core->handles == NULL ||
         core->deadlines == NULL || core->plugins == NULL || core->registry == NULL) {
         free_core(core);
         return NULL;
@@ -89,7 +93,8 @@ weivel_status weivel_core_create(const weivel_core_options *options, weivel_core
     }
     weivel_core_options resolved = resolve_options(options);
     if (resolved.initial_event_capacity > WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY ||
-        !weivel_strings_readable(&resolved.applications) || !weivel_strings_readable(&resolved.well_known_services)) {
+        !weivel_strings_readable(&resolved.applications) || !weivel_strings_readable(&resolved.well_known_services) ||
+        !weivel_vocabulary_readable(&resolved.constraint_vocabulary)) {
         return WEIVEL_STATUS_MALFORMED;
     }
     weivel_core *created = allocate_core(&resolved);
@@ -201,8 +206,8 @@ weivel_status weivel_advance(weivel_core *core, int64_t now, uint32_t *pending_e
     weivel_mutex_lock(core->mutex);
     uint32_t settled = 0;
     weivel_handle subject;
-    while (weivel_deadlines_take_due(core->deadlines, now, &subject)) {
-        weivel_waiting_time_out(core, subject);
+    while (weivel_deadlines_next_due(core->deadlines, now, &subject)) {
+        weivel_waiting_due(core, subject, now);
         settled++;
     }
     if (settled > 0) {

@@ -111,7 +111,14 @@ typedef enum weivel_refusal_code {
     /** A plugin was stopped while it waited, or asked to wait after it stopped. */
     WEIVEL_REFUSAL_STOPPED = 14,
     /** A want's deadline passed before a service it accepts was registered. */
-    WEIVEL_REFUSAL_TIMED_OUT = 15
+    WEIVEL_REFUSAL_TIMED_OUT = 15,
+    /**
+     * A constrained want spent its budget and no provider met its constraints: nothing provided the service, or it
+     * does not degrade. Detail names the constraints and what was offered.
+     */
+    WEIVEL_REFUSAL_UNMET_CONSTRAINT = 16,
+    /** A degradable want's provider would serve neither its constraints nor an unconstrained ask. */
+    WEIVEL_REFUSAL_NOT_SERVED = 17
 } weivel_refusal_code;
 
 /**
@@ -154,19 +161,31 @@ typedef enum weivel_event_kind {
     /** A service a plugin holds was withdrawn, so the plugin must stop using it; the payload is `data.revoked`. */
     WEIVEL_EVENT_REVOKED = 5,
     /** A plugin reached for what it may not, reported once per plugin, kind and id; the payload is `data.reach`. */
-    WEIVEL_EVENT_REACH_REFUSED = 6
+    WEIVEL_EVENT_REACH_REFUSED = 6,
+    /**
+     * A constrained want asks a provider's object a question, answered by weivel_report_capacity; the payload is
+     * `data.capacity`.
+     */
+    WEIVEL_EVENT_CAPACITY_WANTED = 7
 } weivel_event_kind;
 
 /**
  * How a want settled. `implementation` is the registration handle of the service it settled with, or 0 when it was
  * rejected, and then `refusal` says why (WEIVEL_REFUSAL_UNDECLARED, WEIVEL_REFUSAL_WRONG_PROVIDER,
- * WEIVEL_REFUSAL_STOPPED or WEIVEL_REFUSAL_TIMED_OUT); a settled want's `refusal` is code NONE with NULL texts.
+ * WEIVEL_REFUSAL_STOPPED, WEIVEL_REFUSAL_TIMED_OUT, WEIVEL_REFUSAL_UNMET_CONSTRAINT or WEIVEL_REFUSAL_NOT_SERVED); a
+ * settled want's `refusal` is code NONE with NULL texts.
  */
 typedef struct weivel_want_event {
     weivel_handle want;
     weivel_handle plugin;
     weivel_handle implementation;
     weivel_refusal refusal;
+    /**
+     * 1 when a constrained want accepted a provider that never met its constraints, because its budget was spent
+     * and it is degradable; a WEIVEL_LOG_WARNING log saying what it asked for and what it was offered comes just
+     * before. 0 otherwise. Appended after the event's first shape.
+     */
+    uint32_t degraded;
 } weivel_want_event;
 
 /** What a watch heard. */
@@ -203,6 +222,53 @@ typedef struct weivel_reach_refusal {
     weivel_refusal refusal;
 } weivel_reach_refusal;
 
+/** One named number: an attribute a service advertises, or a constraint a consumer sets on it. */
+typedef struct weivel_number {
+    uint32_t size;
+    const char *name;
+    double value;
+} weivel_number;
+
+/**
+ * A list of size-prefixed elements, `count` of them contiguous at `items`. The first element's `size` is the
+ * list's stride and every element declares the same, so elements built against an older or a newer header are read
+ * correctly. `items` may be NULL only when `count` is 0. The other element lists read the same way.
+ *
+ * @implNote A list carries no `size` of its own because it is embedded by value: it could never grow without moving
+ * the fields after it, so its elements are what grow.
+ */
+typedef struct weivel_numbers {
+    const weivel_number *items;
+    uint32_t count;
+} weivel_numbers;
+
+/** What a WEIVEL_EVENT_CAPACITY_WANTED asks of a provider's object. */
+typedef enum weivel_capacity_question {
+    /** What the provider offers now: answer with its live attributes, none at all when it has nothing live to add. */
+    WEIVEL_CAPACITY_ATTRIBUTES = 1,
+    /**
+     * Whether the provider serves the consumer under `constraints`, an unconstrained ask when they are empty: answer
+     * with `serves`.
+     */
+    WEIVEL_CAPACITY_SERVE = 2
+} weivel_capacity_question;
+
+/**
+ * One question a constrained want puts to the provider registered as `registration`, on behalf of `plugin`.
+ * `constraints` are the consumer's, each name and value, and live in the event's storage; empty for an
+ * unconstrained ask. The answer names `want`, `registration` and `request`, and counts only until the poll or
+ * question that asked ends.
+ */
+typedef struct weivel_capacity_event {
+    weivel_handle want;
+    weivel_handle plugin;
+    weivel_handle registration;
+    uint64_t request;
+    /** A weivel_capacity_question. */
+    uint32_t question;
+    weivel_numbers constraints;
+} weivel_capacity_event;
+
 /**
  * How many 64-bit words an event's payload union spans. Part of the event's first published shape, so it never
  * shrinks; a payload that outgrows it enlarges the union and so `sizeof(weivel_event)`, which the size convention
@@ -227,6 +293,7 @@ typedef struct weivel_event {
         weivel_watch_event watch;
         weivel_revoked_event revoked;
         weivel_reach_refusal reach;
+        weivel_capacity_event capacity;
         uint64_t reserved[WEIVEL_EVENT_PAYLOAD_WORDS];
     } data;
 } weivel_event;
@@ -249,26 +316,6 @@ typedef enum weivel_choice {
     WEIVEL_CHOICE_NO = 1,
     WEIVEL_CHOICE_YES = 2
 } weivel_choice;
-
-/** One named number: an attribute a service advertises, or a constraint a consumer sets on it. */
-typedef struct weivel_number {
-    uint32_t size;
-    const char *name;
-    double value;
-} weivel_number;
-
-/**
- * A list of size-prefixed elements, `count` of them contiguous at `items`. The first element's `size` is the
- * list's stride and every element declares the same, so elements built against an older or a newer header are read
- * correctly. `items` may be NULL only when `count` is 0. The other element lists read the same way.
- *
- * @implNote A list carries no `size` of its own because it is embedded by value: it could never grow without moving
- * the fields after it, so its elements are what grow.
- */
-typedef struct weivel_numbers {
-    const weivel_number *items;
-    uint32_t count;
-} weivel_numbers;
 
 /** A service a plugin registers, with what it advertises until the live service reports its own. */
 typedef struct weivel_service_offer {
@@ -350,6 +397,31 @@ typedef struct weivel_manifest {
     const char *identity;
 } weivel_manifest;
 
+/** Which way a constraint bounds the attribute it is compared against. */
+typedef enum weivel_bound {
+    /** The attribute must be at least the constraint's value. */
+    WEIVEL_BOUND_LOWER = 1,
+    /** The attribute must be at most the constraint's value. */
+    WEIVEL_BOUND_UPPER = 2
+} weivel_bound;
+
+/** One entry of a host's constraint vocabulary: `constraint_name` is met by `attribute_name` within `bound`. */
+typedef struct weivel_constraint_entry {
+    uint32_t size;
+    /** Required, non-empty, named by no other entry. */
+    const char *constraint_name;
+    /** Required, non-empty. */
+    const char *attribute_name;
+    /** A weivel_bound. Required. */
+    uint32_t bound;
+} weivel_constraint_entry;
+
+/** A list of vocabulary entries, read the way weivel_numbers is read. */
+typedef struct weivel_constraint_vocabulary {
+    const weivel_constraint_entry *items;
+    uint32_t count;
+} weivel_constraint_vocabulary;
+
 /** The api level this core implements, which a host implements unless it says otherwise. */
 #define WEIVEL_API_VERSION 2u
 
@@ -373,6 +445,12 @@ typedef struct weivel_core_options {
      * copied by weivel_core_create. Every other id a plugin registers carries its import name as namespace.
      */
     weivel_strings well_known_services;
+    /**
+     * Which constraint name compares against which attribute, and how, copied by weivel_core_create. The core
+     * knows no constraint of its own, so a constraint no entry names is never met. Appended after
+     * `well_known_services`.
+     */
+    weivel_constraint_vocabulary constraint_vocabulary;
 } weivel_core_options;
 
 /**
@@ -382,8 +460,9 @@ typedef struct weivel_core_options {
  * @param core receives the new core, owned by the caller until weivel_core_destroy. Required.
  * @param pending_events receives how many events wait; may be NULL.
  * @return WEIVEL_STATUS_OK, or WEIVEL_STATUS_MALFORMED (no `core`, options smaller than their first shape, an
- * initial_event_capacity above its maximum, or an `applications` or `well_known_services` list that cannot be
- * read) or
+ * initial_event_capacity above its maximum, an `applications` or `well_known_services` list that cannot be read, or
+ * a vocabulary that cannot be read, has an entry missing a name or with a bound that is no weivel_bound, or names
+ * a constraint twice) or
  * WEIVEL_STATUS_OUT_OF_MEMORY, with `*core` set to NULL when `core` is given. No core exists to carry a refusal event
  * for either.
  * Threading: any thread.
@@ -686,6 +765,9 @@ WEIVEL_API weivel_status weivel_quarantine_plugin(weivel_core *core, weivel_hand
  * whatever it still holds through late calls is revoked to it first. The handle then names nothing, so a call made
  * with it afterwards is refused with WEIVEL_REFUSAL_STALE_HANDLE, and its slot may name something new later.
  *
+ * Each such revocation is a WEIVEL_EVENT_REVOKED whose `plugin` is this very handle, already stale when the event
+ * is drained: it tells the caller which of its own entries to drop, and is never a handle to call with.
+ *
  * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for a stale handle or a plugin not released
  * (WEIVEL_REFUSAL_PLUGIN_STATE), queuing a refusal; WEIVEL_STATUS_MALFORMED for a NULL core.
  * Threading: any thread.
@@ -751,15 +833,36 @@ WEIVEL_API weivel_status weivel_unregister(weivel_core *core, weivel_handle hand
 WEIVEL_API weivel_status weivel_get_service(weivel_core *core, weivel_handle plugin, const char *id,
                                             weivel_handle *implementation, uint32_t *pending_events);
 
+/** The budget a constrained want spends when its options give none. */
+#define WEIVEL_DEFAULT_BUDGET_MILLIS 30000
+/** How often a constrained want polls when its options give no budget. */
+#define WEIVEL_DEFAULT_POLL_MILLIS 1000
+
 /** How long a want may wait. Zero, or a field beyond `size`, means the default: no deadline at all. */
 typedef struct weivel_want_options {
     uint32_t size;
-    /** Whether the want has a deadline, a weivel_choice. Default NO, so it waits for as long as it takes. */
+    /**
+     * Whether the want has a deadline, a weivel_choice. Default NO, so it waits for as long as it takes. A
+     * constrained want's budget is its deadline, so it never reads this.
+     */
     uint32_t timed;
-    /** The caller's time now, on its own monotonic scale in milliseconds; read only when `timed` is YES. */
+    /**
+     * The caller's time now, on its own monotonic scale in milliseconds; read when `timed` is YES, and for every
+     * constrained want, whose polls it starts.
+     */
     int64_t now;
     /** How long after `now` the want gives up, at least 0; read only when `timed` is YES. */
     int64_t timeout_millis;
+    /**
+     * Whether `budget_millis` and `poll_millis` are given, a weivel_choice, read only for a constrained want.
+     * Default NO: WEIVEL_DEFAULT_BUDGET_MILLIS polled every WEIVEL_DEFAULT_POLL_MILLIS. Appended after
+     * `timeout_millis`.
+     */
+    uint32_t budgeted;
+    /** How long a constrained want polls before it degrades or is refused, at least 0. */
+    int64_t budget_millis;
+    /** How often it polls, more than 0. */
+    int64_t poll_millis;
 } weivel_want_options;
 
 /**
@@ -773,16 +876,73 @@ typedef struct weivel_want_options {
  * plugin no longer running, is rejected with WEIVEL_REFUSAL_STOPPED and logged. A want the plugin still waits on
  * when it is released or quarantined is rejected the same way.
  *
- * @param options may be NULL for no deadline; read only during the call.
+ * A want is constrained when the plugin's manifest gives `id` constraints. It never settles on a registration
+ * alone: it polls, because a provider's capacity is live and the core never calls out to read it. Poll k starts at
+ * `now + k * poll_millis` and lasts until the next one starts, from poll 0 to the first whose start is
+ * `budget_millis` or more after `now`, the last. At each poll:
+ *
+ * 1. When a registration it accepts is under `id`, a WEIVEL_EVENT_CAPACITY_WANTED asks that provider for its
+ *    attributes. The answer is laid over what the provider's manifest advertises for `id`, name by name, so a live
+ *    attribute replaces one claim and leaves the others standing, and an empty answer leaves every claim standing.
+ *    Nothing is carried from one poll to the next: a poll the provider does not answer in time is "not right now".
+ * 2. When those attributes meet every constraint, under the host's vocabulary, a second question asks whether the
+ *    provider serves the consumer under them, and a yes settles the want with that registration.
+ * 3. After the last poll the budget is spent. A want that does not degrade, or whose service nothing provides, is
+ *    rejected with WEIVEL_REFUSAL_UNMET_CONSTRAINT. A degradable one asks once more under its constraints, then
+ *    unconstrained, each question answerable for `poll_millis`, and settles degraded with the first yes, or is
+ *    rejected with WEIVEL_REFUSAL_NOT_SERVED.
+ *
+ * Every end of a poll or question left unanswered is a deadline weivel_next_deadline reports and weivel_advance
+ * acts on; a poll whose time has wholly passed by then is skipped, never asked late. A constraint the vocabulary
+ * does not name is logged once, at the want's start, and is never met.
+ *
+ * @param options may be NULL for no deadline and the default budget; read only during the call.
  * @param want receives the want handle, which names the want until it settles. Required.
  * @return WEIVEL_STATUS_OK with a want, including one rejected at once; WEIVEL_STATUS_REFUSED for a stale plugin
  * or one never opened; WEIVEL_STATUS_MALFORMED for a NULL core, id or want, an empty id, options below their first
- * shape, `timed` no weivel_choice or a negative timeout; WEIVEL_STATUS_OUT_OF_MEMORY.
+ * shape, `timed` or `budgeted` no weivel_choice, a negative timeout, a negative budget or a poll interval that is
+ * not positive; WEIVEL_STATUS_OUT_OF_MEMORY.
  * Threading: any thread.
  */
 WEIVEL_API weivel_status weivel_want_service(weivel_core *core, weivel_handle plugin, const char *id,
                                              const weivel_want_options *options, weivel_handle *want,
                                              uint32_t *pending_events);
+
+/** A provider's answer to one WEIVEL_EVENT_CAPACITY_WANTED. Zero, or a field beyond `size`, means the default. */
+typedef struct weivel_capacity {
+    uint32_t size;
+    /** The `request` of the event being answered. Required. */
+    uint64_t request;
+    /**
+     * For WEIVEL_CAPACITY_ATTRIBUTES: what the provider offers now, no name twice, read only during the call.
+     * Empty means nothing live to add, so what it advertised stands.
+     */
+    weivel_numbers attributes;
+    /** For WEIVEL_CAPACITY_SERVE: whether it serves, a weivel_choice; anything but YES is a no. */
+    uint32_t serves;
+} weivel_capacity;
+
+/**
+ * Answers a WEIVEL_EVENT_CAPACITY_WANTED. The core decides on it at once: it may settle the want, ask the provider
+ * its next question, or wait for the next poll.
+ *
+ * An answer counts only for the question it names, while that question is open: from its event until its poll or
+ * question ends, and a `now` at or after that end means it has. An answer to an earlier poll, to a question already
+ * answered, for a registration that has since gone, or for a want that is not constrained counts for nothing.
+ *
+ * @param want the want the event named.
+ * @param registration the registration the event named.
+ * @param capacity the answer. Required; read only during the call.
+ * @param now the caller's time now.
+ * @return WEIVEL_STATUS_OK when the answer counted; WEIVEL_STATUS_NONE when it answers no open question, queuing
+ * nothing; WEIVEL_STATUS_REFUSED for a want handle that names no want (WEIVEL_REFUSAL_STALE_HANDLE), queuing a
+ * refusal; WEIVEL_STATUS_MALFORMED for a NULL core or capacity, a capacity below its first shape or attributes that
+ * cannot be read or name one twice, queuing a refusal when the core is given; WEIVEL_STATUS_OUT_OF_MEMORY.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_report_capacity(weivel_core *core, weivel_handle want, weivel_handle registration,
+                                                const weivel_capacity *capacity, int64_t now,
+                                                uint32_t *pending_events);
 
 /**
  * Watches `id`: each later registration and unregistration of it that the plugin accepts is a WEIVEL_EVENT_WATCH,

@@ -125,14 +125,19 @@ static weivel_plugin *new_plugin(void) {
     return plugin;
 }
 
-static weivel_status declare(weivel_plugin *plugin, const char *id, const char *provider, bool consumed) {
-    if (weivel_table_find_text(plugin->declared, id) != NULL) {
+static weivel_status declare(weivel_plugin *plugin, const char *id, const weivel_service_want *wanted,
+                             const weivel_service_offer *offered) {
+    weivel_declaration *declaration = weivel_table_find_text(plugin->declared, id);
+    if (declaration != NULL) {
+        declaration->offered = offered;
         return WEIVEL_STATUS_OK;
     }
-    weivel_declaration *declaration = &plugin->declarations[plugin->declaration_count++];
+    declaration = &plugin->declarations[plugin->declaration_count++];
     declaration->id = id;
-    declaration->provider = provider;
-    declaration->consumed = consumed;
+    declaration->provider = wanted == NULL ? NULL : wanted->provider;
+    declaration->consumed = wanted != NULL;
+    declaration->wanted = wanted;
+    declaration->offered = offered;
     return weivel_table_add_text(plugin->declared, id, declaration);
 }
 
@@ -146,10 +151,11 @@ static weivel_status declare_services(weivel_plugin *plugin) {
     weivel_status status = WEIVEL_STATUS_OK;
     for (uint32_t index = 0; status == WEIVEL_STATUS_OK && index < services->consumes.count; index++) {
         const weivel_service_want *want = &services->consumes.items[index];
-        status = declare(plugin, want->id, want->provider, true);
+        status = declare(plugin, want->id, want, NULL);
     }
     for (uint32_t index = 0; status == WEIVEL_STATUS_OK && index < services->provides.count; index++) {
-        status = declare(plugin, services->provides.items[index].id, NULL, false);
+        const weivel_service_offer *offer = &services->provides.items[index];
+        status = declare(plugin, offer->id, NULL, offer);
     }
     return status;
 }
