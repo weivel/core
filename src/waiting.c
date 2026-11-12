@@ -52,7 +52,6 @@ void weivel_waiting_arrival(weivel_core *core, weivel_slot *slot) {
             weivel_waiting_settle(core, want, registration);
         } else {
             weivel_reach mismatch;
-            memset(&mismatch, 0, sizeof mismatch);
             weivel_reach_refuse_provider(core, want->consumer, slot->id, want->provider,
                                          weivel_registry_owner_name(registration), &mismatch);
         }

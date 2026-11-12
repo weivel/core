@@ -59,6 +59,8 @@ static void refuse_undeclared(weivel_core *core, weivel_plugin *plugin, const ch
 void weivel_reach_refuse_provider(weivel_core *core, weivel_plugin *plugin, const char *id, const char *provider,
                                   const char *owner, weivel_reach *reach) {
     reach->code = WEIVEL_REFUSAL_WRONG_PROVIDER;
+    reach->late = false;
+    reach->provider = provider;
     snprintf(reach->detail, sizeof reach->detail, "reached for service \"%s\", which it binds to %s but %s provides",
              id, provider, owner);
     snprintf(reach->fix, sizeof reach->fix,
