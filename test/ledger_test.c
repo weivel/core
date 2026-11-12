@@ -171,7 +171,7 @@ static void records_what_each_activation_provided_and_consumed(void) {
     check_strings(&row.capabilities_provided, capabilities, "and its capabilities");
     weivel_ledger_row_release(&row);
 
-    CHECK(weivel_quarantine_plugin(core, notes, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_quarantine_plugin(core, notes, NULL, NULL) == WEIVEL_STATUS_OK);
     CHECK(weivel_ledger_entry(core, notes, &row, NULL) == WEIVEL_STATUS_OK);
     CHECK(row.status == WEIVEL_PLUGIN_STATUS_QUARANTINED);
     check_strings(&row.services_consumed, consumed, "a quarantined plugin's row keeps what it consumed");
@@ -205,6 +205,82 @@ static void a_late_call_is_no_relationship(void) {
     weivel_core_destroy(core);
 }
 
+static weivel_quarantine_reason reason_of(uint32_t code, const char *detail, const char *fix) {
+    weivel_quarantine_reason reason = WEIVEL_INIT(weivel_quarantine_reason);
+    reason.code = code;
+    reason.detail = detail;
+    reason.fix = fix;
+    return reason;
+}
+
+static void check_row_refusal(weivel_core *core, weivel_handle plugin, uint32_t code, const char *detail,
+                              const char *fix, const char *label) {
+    weivel_ledger_row row = WEIVEL_INIT(weivel_ledger_row);
+    CHECK(weivel_ledger_entry(core, plugin, &row, NULL) == WEIVEL_STATUS_OK);
+    CHECK(row.refusal.code == code);
+    if (detail == NULL) {
+        CHECK(row.refusal.detail == NULL && row.refusal.fix == NULL);
+    } else {
+        check_text(row.refusal.detail, detail, label);
+        check_text(row.refusal.fix, fix, label);
+    }
+    weivel_ledger_row_release(&row);
+}
+
+static void shows_the_reason_a_host_gave_for_a_quarantine(void) {
+    weivel_core *core = plain_core();
+    ledger_spec screens = {.import_name = "screens", .capabilities_provided = {"screen"}};
+    weivel_handle plugin = open_ledger_spec(core, &screens);
+    char detail[] = "its activation threw: out of paper";
+    char fix[] = "load more paper";
+    weivel_quarantine_reason reason = reason_of(WEIVEL_REFUSAL_NONE, detail, fix);
+    CHECK(weivel_quarantine_plugin(core, plugin, &reason, NULL) == WEIVEL_STATUS_OK);
+    memset(detail, 'x', sizeof detail - 1);
+    memset(fix, 'y', sizeof fix - 1);
+    check_row_refusal(core, plugin, WEIVEL_REFUSAL_NONE, "its activation threw: out of paper", "load more paper",
+                      "the reason, copied in");
+
+    CHECK(weivel_quarantine_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
+    check_row_refusal(core, plugin, WEIVEL_REFUSAL_NONE, "its activation threw: out of paper", "load more paper",
+                      "a later quarantine without a reason keeps it");
+
+    CHECK(weivel_open_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
+    check_row_refusal(core, plugin, WEIVEL_REFUSAL_NONE, NULL, NULL, "opening clears it");
+    CHECK(weivel_verify_activation(core, plugin, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_quarantine_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
+    check_row_refusal(core, plugin, WEIVEL_REFUSAL_ACTIVATION_MISMATCH,
+                      "capabilities declared but never provided: screen",
+                      "provide \"screen\" while the plugin activates, or remove \"screen\" from the capabilities it "
+                      "provides in its manifest",
+                      "no reason shows the refused verify");
+    weivel_quarantine_reason later = reason_of(WEIVEL_REFUSAL_UNMET_NEED, "the host gave up", "restart it");
+    CHECK(weivel_quarantine_plugin(core, plugin, &later, NULL) == WEIVEL_STATUS_OK);
+    check_row_refusal(core, plugin, WEIVEL_REFUSAL_UNMET_NEED, "the host gave up", "restart it",
+                      "a reason replaces the refused verify");
+    weivel_core_destroy(core);
+}
+
+static void a_malformed_reason_quarantines_nothing(void) {
+    weivel_core *core = plain_core();
+    ledger_spec notes = {.import_name = "notes"};
+    weivel_handle plugin = open_ledger_spec(core, &notes);
+    weivel_quarantine_reason small = reason_of(0, "d", "f");
+    small.size = 8;
+    weivel_quarantine_reason no_detail = reason_of(0, NULL, "f");
+    weivel_quarantine_reason no_fix = reason_of(0, "d", NULL);
+    CHECK(weivel_quarantine_plugin(core, plugin, &small, NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_quarantine_plugin(core, plugin, &no_detail, NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_quarantine_plugin(core, plugin, &no_fix, NULL) == WEIVEL_STATUS_MALFORMED);
+    weivel_ledger_row row = WEIVEL_INIT(weivel_ledger_row);
+    CHECK(weivel_ledger_entry(core, plugin, &row, NULL) == WEIVEL_STATUS_OK);
+    CHECK(row.status == WEIVEL_PLUGIN_STATUS_ACTIVE);
+    weivel_ledger_row_release(&row);
+    drain(core);
+    CHECK(count_kind(WEIVEL_EVENT_REFUSAL) == 3);
+    CHECK(nth_of(WEIVEL_EVENT_REFUSAL, 0)->code == WEIVEL_REFUSAL_MALFORMED_CALL);
+    weivel_core_destroy(core);
+}
+
 static void shows_the_refusal_that_quarantined_an_activation(void) {
     weivel_core *core = plain_core();
     ledger_spec screens = {.import_name = "screens", .capabilities_provided = {"screen"}};
@@ -217,7 +293,7 @@ static void shows_the_refusal_that_quarantined_an_activation(void) {
     CHECK(row.refusal.code == WEIVEL_REFUSAL_NONE);
     weivel_ledger_row_release(&row);
 
-    CHECK(weivel_quarantine_plugin(core, plugin, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_quarantine_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
     CHECK(weivel_ledger_entry(core, plugin, &row, NULL) == WEIVEL_STATUS_OK);
     CHECK(row.status == WEIVEL_PLUGIN_STATUS_QUARANTINED);
     CHECK(row.verified == 0);
@@ -233,7 +309,7 @@ static void shows_the_refusal_that_quarantined_an_activation(void) {
     weivel_handle implementation = 0;
     CHECK(weivel_provide_capability(core, plugin, "screen", &implementation, NULL) == WEIVEL_STATUS_OK);
     CHECK(weivel_verify_activation(core, plugin, NULL) == WEIVEL_STATUS_OK);
-    CHECK(weivel_quarantine_plugin(core, plugin, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_quarantine_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
     CHECK(weivel_ledger_entry(core, plugin, &row, NULL) == WEIVEL_STATUS_OK);
     CHECK(row.status == WEIVEL_PLUGIN_STATUS_QUARANTINED);
     CHECK(row.verified == 1);
@@ -451,6 +527,8 @@ int main(void) {
     records_what_each_activation_provided_and_consumed();
     a_late_call_is_no_relationship();
     shows_the_refusal_that_quarantined_an_activation();
+    shows_the_reason_a_host_gave_for_a_quarantine();
+    a_malformed_reason_quarantines_nothing();
     a_forgotten_plugin_is_gone_from_the_ledger();
     lists_refusals_in_the_order_they_were_reported();
     a_snapshot_outlives_the_changes_and_the_core();

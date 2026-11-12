@@ -54,6 +54,7 @@ typedef enum weivel_record_kind {
 #define WEIVEL_CAPACITY_FIRST_SIZE (offsetof(weivel_capacity, serves) + sizeof(uint32_t))
 #define WEIVEL_SERVICE_LIST_FIRST_SIZE (offsetof(weivel_service_list, storage) + sizeof(void *))
 #define WEIVEL_CAPABILITY_LIST_FIRST_SIZE (offsetof(weivel_capability_list, storage) + sizeof(void *))
+#define WEIVEL_QUARANTINE_REASON_FIRST_SIZE (offsetof(weivel_quarantine_reason, fix) + sizeof(const char *))
 #define WEIVEL_LEDGER_ROW_FIRST_SIZE (offsetof(weivel_ledger_row, storage) + sizeof(void *))
 #define WEIVEL_LEDGER_SNAPSHOT_FIRST_SIZE (offsetof(weivel_ledger_snapshot, storage) + sizeof(void *))
 

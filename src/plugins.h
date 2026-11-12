@@ -84,6 +84,8 @@ typedef struct weivel_plugin {
     bool verified;
     /** The refusal verification last answered its activation since it was opened. */
     weivel_kept_refusal activation_refusal;
+    /** The last reason it was quarantined for since it was opened, which the ledger shows over the one above. */
+    weivel_kept_refusal quarantine_reason;
 } weivel_plugin;
 
 /** Every plugin record one core owns; the handle table only borrows them. */

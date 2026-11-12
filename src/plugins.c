@@ -7,6 +7,7 @@
 
 #include "core_internal.h"
 #include "sized.h"
+#include "text.h"
 
 struct weivel_plugins {
     weivel_plugin **items;
@@ -416,38 +417,82 @@ static void release_plugin(weivel_core *core, weivel_plugin *plugin) {
     plugin->state = WEIVEL_PLUGIN_RELEASED;
 }
 
-static weivel_status quarantine_plugin(weivel_core *core, weivel_plugin *plugin) {
+static void log_quarantined(weivel_core *core, const weivel_plugin *plugin) {
+    const weivel_kept_refusal *why = weivel_kept_refusal_held(&plugin->quarantine_reason)
+                                         ? &plugin->quarantine_reason
+                                         : &plugin->activation_refusal;
+    char *text = weivel_text_format("quarantined the plugin \"%s\": %s", plugin->manifest.value.import_name,
+                                    weivel_kept_refusal_held(why) ? why->detail : "no reason was given");
+    if (text == NULL) {
+        weivel_core_log(core, WEIVEL_LOG_ERROR, "memory ran out describing a quarantine");
+        return;
+    }
+    weivel_core_log(core, WEIVEL_LOG_INFO, text);
+    free(text);
+}
+
+static weivel_status quarantine_plugin(weivel_core *core, weivel_plugin *plugin,
+                                       const weivel_quarantine_reason *reason) {
     if (plugin->state == WEIVEL_PLUGIN_RELEASED) {
         return refuse_released(core, plugin);
     }
+    weivel_kept_refusal given = {WEIVEL_REFUSAL_NONE, NULL, NULL};
+    if (reason != NULL && !weivel_kept_refusal_copy(&given, reason->code, reason->detail, reason->fix)) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
     strip_plugin(core, plugin);
     plugin->state = WEIVEL_PLUGIN_QUARANTINED;
+    if (reason != NULL) {
+        weivel_kept_refusal_clear(&plugin->quarantine_reason);
+        plugin->quarantine_reason = given;
+    }
+    log_quarantined(core, plugin);
     return WEIVEL_STATUS_OK;
 }
 
-static weivel_status end_plugin(weivel_core *core, weivel_handle plugin, bool release, uint32_t *pending_events) {
+weivel_status weivel_release_plugin(weivel_core *core, weivel_handle plugin, uint32_t *pending_events) {
     if (core == NULL) {
         return WEIVEL_STATUS_MALFORMED;
     }
     weivel_mutex_lock(core->mutex);
     weivel_plugin *record = NULL;
     weivel_status status = weivel_core_plugin(core, plugin, &record);
-    if (status == WEIVEL_STATUS_OK && release) {
+    if (status == WEIVEL_STATUS_OK) {
         release_plugin(core, record);
-    } else if (status == WEIVEL_STATUS_OK) {
-        status = quarantine_plugin(core, record);
     }
     weivel_core_report_pending(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
 
-weivel_status weivel_release_plugin(weivel_core *core, weivel_handle plugin, uint32_t *pending_events) {
-    return end_plugin(core, plugin, true, pending_events);
+/** Reads a caller's reason into `resolved`; false when it is too small or misses a text. */
+static bool read_reason(const weivel_quarantine_reason *reason, weivel_quarantine_reason *resolved) {
+    if (weivel_sized_size(reason) < WEIVEL_QUARANTINE_REASON_FIRST_SIZE) {
+        return false;
+    }
+    weivel_sized_read(resolved, sizeof *resolved, reason);
+    return resolved->detail != NULL && resolved->fix != NULL;
 }
 
-weivel_status weivel_quarantine_plugin(weivel_core *core, weivel_handle plugin, uint32_t *pending_events) {
-    return end_plugin(core, plugin, false, pending_events);
+weivel_status weivel_quarantine_plugin(weivel_core *core, weivel_handle plugin,
+                                       const weivel_quarantine_reason *reason, uint32_t *pending_events) {
+    if (core == NULL) {
+        return WEIVEL_STATUS_MALFORMED;
+    }
+    weivel_mutex_lock(core->mutex);
+    weivel_quarantine_reason resolved;
+    weivel_plugin *record = NULL;
+    weivel_status status;
+    if (reason != NULL && !read_reason(reason, &resolved)) {
+        status = weivel_core_refuse_malformed(
+            core, "weivel_quarantine_plugin was given a reason whose size is too small, or with no detail or fix",
+            "pass NULL, or a weivel_quarantine_reason initialised with WEIVEL_INIT with its detail and fix set");
+    } else if ((status = weivel_core_plugin(core, plugin, &record)) == WEIVEL_STATUS_OK) {
+        status = quarantine_plugin(core, record, reason == NULL ? NULL : &resolved);
+    }
+    weivel_core_report_pending(core, pending_events);
+    weivel_mutex_unlock(core->mutex);
+    return status;
 }
 
 static weivel_status forget_plugin(weivel_core *core, weivel_plugin *plugin) {

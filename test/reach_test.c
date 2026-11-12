@@ -98,7 +98,7 @@ static void perform(weivel_core *core, const weivel_handle *plugins, const step 
         record->status = weivel_release_plugin(core, plugin, NULL);
         break;
     case QUARANTINE:
-        record->status = weivel_quarantine_plugin(core, plugin, NULL);
+        record->status = weivel_quarantine_plugin(core, plugin, NULL, NULL);
         break;
     }
     drain(core);

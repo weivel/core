@@ -129,7 +129,7 @@ static void perform(consume_run *run, const step *the_step, step_record *record)
     case VERIFY:
         record->status = weivel_verify_activation(run->core, plugin, NULL);
         if (record->status == WEIVEL_STATUS_REFUSED) {
-            CHECK(weivel_quarantine_plugin(run->core, plugin, NULL) == WEIVEL_STATUS_OK);
+            CHECK(weivel_quarantine_plugin(run->core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
         }
         break;
     case ALL:
@@ -139,7 +139,7 @@ static void perform(consume_run *run, const step *the_step, step_record *record)
         record->status = weivel_watch_capability(run->core, plugin, the_step->id, &record->watch, NULL);
         break;
     case QUARANTINE:
-        record->status = weivel_quarantine_plugin(run->core, plugin, NULL);
+        record->status = weivel_quarantine_plugin(run->core, plugin, NULL, NULL);
         break;
     case RELEASE:
         record->status = weivel_release_plugin(run->core, plugin, NULL);
@@ -653,7 +653,7 @@ static void a_watch_ends_by_its_handle_and_by_its_consumer_stopping(void) {
     weivel_handle quarantined = watch_capability(core, notes, "screens");
     CHECK(weivel_unregister(core, unwatched, NULL) == WEIVEL_STATUS_OK);
     CHECK(weivel_unregister(core, unwatched, NULL) == WEIVEL_STATUS_REFUSED);
-    CHECK(weivel_quarantine_plugin(core, notes, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_quarantine_plugin(core, notes, NULL, NULL) == WEIVEL_STATUS_OK);
     CHECK(weivel_open_plugin(core, notes, NULL, NULL) == WEIVEL_STATUS_OK);
     forget(core);
     provide(core, calendar, "screens");
@@ -689,7 +689,7 @@ static void a_reopened_provider_rejoins_once_verified_again(void) {
     weivel_handle calendar = open_capabilities(core, "calendar", SCREENS, NONE);
     weivel_handle first = provide(core, calendar, "screens");
     CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_OK);
-    CHECK(weivel_quarantine_plugin(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_quarantine_plugin(core, calendar, NULL, NULL) == WEIVEL_STATUS_OK);
     CHECK(count_all(core, agenda, "screens") == 0);
     CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(weivel_open_plugin(core, calendar, NULL, NULL) == WEIVEL_STATUS_OK);
@@ -787,7 +787,7 @@ static void a_holder_is_revoked_once_when_its_provider_is_quarantined(void) {
     CHECK(count_all(core, agenda, "screens") == 1);
     CHECK(holdings_now(core) == 1);
     forget(core);
-    CHECK(weivel_quarantine_plugin(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_quarantine_plugin(core, calendar, NULL, NULL) == WEIVEL_STATUS_OK);
     CHECK(weivel_release_plugin(core, calendar, NULL) == WEIVEL_STATUS_OK);
     drain(core);
     CHECK(count_kind(WEIVEL_EVENT_REVOKED) == 1);

@@ -785,16 +785,35 @@ WEIVEL_API weivel_status weivel_plugin_payload(weivel_core *core, weivel_handle 
 WEIVEL_API weivel_status weivel_release_plugin(weivel_core *core, weivel_handle plugin, uint32_t *pending_events);
 
 /**
+ * Why a plugin was quarantined, as the caller knows it: its activation threw, or anything else the host decided.
+ * Zero, or a field beyond `size`, means the default.
+ */
+typedef struct weivel_quarantine_reason {
+    uint32_t size;
+    /** A weivel_refusal_code, or WEIVEL_REFUSAL_NONE when no code fits; carried as given. */
+    uint32_t code;
+    /** What happened, English UTF-8, copied. Required. */
+    const char *detail;
+    /** What would make it succeed, English UTF-8, copied. Required. */
+    const char *fix;
+} weivel_quarantine_reason;
+
+/**
  * Quarantines a plugin: everything weivel_release_plugin takes from it goes in the same one call, but it keeps its
  * import name and identity, and opening it again lifts the fence. Its calls meanwhile are late, as a released
- * plugin's are.
+ * plugin's are. An INFO log names the plugin and why.
  *
+ * @param reason why, shown by the plugin's ledger row until it is opened again; read only during the call. NULL
+ * gives none, and the row then shows the refusal weivel_verify_activation last answered its activation, if any. A
+ * reason given replaces any shown before.
  * @return WEIVEL_STATUS_OK, also for a plugin quarantined already; WEIVEL_STATUS_REFUSED for a stale handle or a
- * released plugin (WEIVEL_REFUSAL_PLUGIN_STATE); WEIVEL_STATUS_MALFORMED for a NULL core.
+ * released plugin (WEIVEL_REFUSAL_PLUGIN_STATE); WEIVEL_STATUS_MALFORMED for a NULL core, or a reason below its
+ * first shape or missing its detail or fix, queuing a refusal when the core is given; WEIVEL_STATUS_OUT_OF_MEMORY,
+ * with nothing changed.
  * Threading: any thread.
  */
 WEIVEL_API weivel_status weivel_quarantine_plugin(weivel_core *core, weivel_handle plugin,
-                                                  uint32_t *pending_events);
+                                                  const weivel_quarantine_reason *reason, uint32_t *pending_events);
 
 /**
  * Forgets a released plugin: its record, its manifest, the refusals reported for it and its handle all go, and
@@ -1185,8 +1204,9 @@ typedef struct weivel_ledger_row {
     /** 1 when weivel_verify_activation has passed the plugin since it was last opened, else 0. */
     uint32_t verified;
     /**
-     * For a quarantined plugin whose activation weivel_verify_activation refused since it was last opened, that
-     * refusal; otherwise code NONE with NULL texts. A quarantine for any other reason is the caller's to record.
+     * For a quarantined plugin, why: the last reason weivel_quarantine_plugin was given since the plugin was last
+     * opened, else the refusal weivel_verify_activation answered its activation since then. Otherwise, and for a
+     * plugin in any other status, code NONE with NULL texts.
      */
     weivel_refusal refusal;
     weivel_strings capabilities_declared;
