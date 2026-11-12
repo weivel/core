@@ -22,6 +22,7 @@ function(weivel_strict_warnings target)
 endfunction()
 
 set(WEIVEL_CORE_SOURCES
+    src/activation.c
     src/compatibility.c
     src/core.c
     src/deadlines.c

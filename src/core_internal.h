@@ -33,6 +33,7 @@ typedef enum weivel_record_kind {
 #define WEIVEL_CORE_OPTIONS_FIRST_SIZE (offsetof(weivel_core_options, initial_event_capacity) + sizeof(uint32_t))
 #define WEIVEL_EVENT_FIRST_SIZE (offsetof(weivel_event, data) + WEIVEL_EVENT_PAYLOAD_WORDS * sizeof(uint64_t))
 #define WEIVEL_SUPPORT_FIRST_SIZE (offsetof(weivel_support, storage) + sizeof(void *))
+#define WEIVEL_ACTIVATION_PLAN_FIRST_SIZE (offsetof(weivel_activation_plan, storage) + sizeof(void *))
 
 /** Queues a log event when `level` reaches the core's minimum. Called with the core's mutex held. */
 void weivel_core_log(weivel_core *core, uint32_t level, const char *text);
