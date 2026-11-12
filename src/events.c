@@ -136,3 +136,54 @@ weivel_status weivel_events_push_refusal(weivel_events *events, uint32_t code, c
     event.data.refusal.fix = copies[1];
     return weivel_events_push(events, &event);
 }
+
+weivel_status weivel_events_push_want(weivel_events *events, const weivel_want_event *settled, const char *detail,
+                                      const char *fix) {
+    weivel_event event = empty_event(WEIVEL_EVENT_WANT_SETTLED);
+    event.data.want = *settled;
+    event.data.want.refusal.detail = NULL;
+    event.data.want.refusal.fix = NULL;
+    if (settled->implementation != 0) {
+        event.data.want.refusal.code = WEIVEL_REFUSAL_NONE;
+        return weivel_events_push(events, &event);
+    }
+    const char *texts[2] = {detail, fix};
+    const char *copies[2];
+    event.storage = weivel_events_copy_texts(2, texts, copies);
+    if (event.storage == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    event.data.want.refusal.detail = copies[0];
+    event.data.want.refusal.fix = copies[1];
+    return weivel_events_push(events, &event);
+}
+
+weivel_status weivel_events_push_watch(weivel_events *events, const weivel_watch_event *heard) {
+    weivel_event event = empty_event(WEIVEL_EVENT_WATCH);
+    event.data.watch = *heard;
+    return weivel_events_push(events, &event);
+}
+
+weivel_status weivel_events_push_revoked(weivel_events *events, const weivel_revoked_event *revoked) {
+    weivel_event event = empty_event(WEIVEL_EVENT_REVOKED);
+    event.data.revoked = *revoked;
+    return weivel_events_push(events, &event);
+}
+
+weivel_status weivel_events_push_reach(weivel_events *events, uint32_t kind, weivel_handle plugin, const char *id,
+                                       uint32_t code, const char *detail, const char *fix) {
+    weivel_event event = empty_event(WEIVEL_EVENT_REACH_REFUSED);
+    const char *texts[3] = {id, detail, fix};
+    const char *copies[3];
+    event.storage = weivel_events_copy_texts(3, texts, copies);
+    if (event.storage == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    event.data.reach.kind = kind;
+    event.data.reach.plugin = plugin;
+    event.data.reach.id = copies[0];
+    event.data.reach.refusal.code = code;
+    event.data.reach.refusal.detail = copies[1];
+    event.data.reach.refusal.fix = copies[2];
+    return weivel_events_push(events, &event);
+}

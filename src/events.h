@@ -30,4 +30,15 @@ void *weivel_events_copy_texts(size_t count, const char *const *texts, const cha
 weivel_status weivel_events_push_log(weivel_events *events, uint32_t level, const char *text);
 weivel_status weivel_events_push_refusal(weivel_events *events, uint32_t code, const char *detail, const char *fix);
 
+/** Queues a want's settlement: with `implementation` when it is not 0, else rejected with the refusal given. */
+weivel_status weivel_events_push_want(weivel_events *events, const weivel_want_event *settled, const char *detail,
+                                      const char *fix);
+
+weivel_status weivel_events_push_watch(weivel_events *events, const weivel_watch_event *heard);
+weivel_status weivel_events_push_revoked(weivel_events *events, const weivel_revoked_event *revoked);
+
+/** Queues a reported refusal of reach, copying `id` and both texts. */
+weivel_status weivel_events_push_reach(weivel_events *events, uint32_t kind, weivel_handle plugin, const char *id,
+                                       uint32_t code, const char *detail, const char *fix);
+
 #endif

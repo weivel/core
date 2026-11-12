@@ -42,7 +42,9 @@ static weivel_core_options resolve_options(const weivel_core_options *options) {
 }
 
 static void free_core(weivel_core *core) {
+    weivel_registry_destroy(core->registry);
     weivel_plugins_destroy(core->plugins);
+    free(core->well_known_storage);
     free(core->host_storage);
     weivel_deadlines_destroy(core->deadlines);
     weivel_handles_destroy(core->handles);
@@ -62,11 +64,15 @@ static weivel_core *allocate_core(const weivel_core_options *options) {
     core->handles = weivel_handles_create();
     core->deadlines = weivel_deadlines_create();
     core->plugins = weivel_plugins_create();
+    core->registry = weivel_registry_create();
     core->host.api = options->api;
     bool host_copied = weivel_strings_copy(&options->applications, &core->host.applications, &core->host_storage);
     core->options.applications = core->host.applications;
-    if (!host_copied || core->mutex == NULL || core->events == NULL || core->handles == NULL ||
-        core->deadlines == NULL || core->plugins == NULL) {
+    bool well_known_copied =
+        weivel_strings_copy(&options->well_known_services, &core->well_known, &core->well_known_storage);
+    core->options.well_known_services = core->well_known;
+    if (!host_copied || !well_known_copied || core->mutex == NULL || core->events == NULL || core->handles == NULL ||
+        core->deadlines == NULL || core->plugins == NULL || core->registry == NULL) {
         free_core(core);
         return NULL;
     }
@@ -83,7 +89,7 @@ weivel_status weivel_core_create(const weivel_core_options *options, weivel_core
     }
     weivel_core_options resolved = resolve_options(options);
     if (resolved.initial_event_capacity > WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY ||
-        !weivel_strings_readable(&resolved.applications)) {
+        !weivel_strings_readable(&resolved.applications) || !weivel_strings_readable(&resolved.well_known_services)) {
         return WEIVEL_STATUS_MALFORMED;
     }
     weivel_core *created = allocate_core(&resolved);
@@ -185,6 +191,7 @@ weivel_status weivel_advance(weivel_core *core, int64_t now, uint32_t *pending_e
     uint32_t settled = 0;
     weivel_handle subject;
     while (weivel_deadlines_take_due(core->deadlines, now, &subject)) {
+        weivel_waiting_time_out(core, subject);
         settled++;
     }
     if (settled > 0) {

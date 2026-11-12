@@ -31,8 +31,12 @@ set(WEIVEL_CORE_SOURCES
     src/manifest.c
     src/mutex.c
     src/plugins.c
+    src/reach.c
+    src/registry.c
     src/sized.c
-    src/supports.c)
+    src/supports.c
+    src/table.c
+    src/waiting.c)
 
 function(weivel_core_target target)
     target_include_directories(${target} PUBLIC include)
