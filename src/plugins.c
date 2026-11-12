@@ -16,6 +16,7 @@ struct weivel_plugins {
     weivel_table *names;
     /** From the identity of each plugin that is not released to the plugin. */
     weivel_table *identities;
+    weivel_link order;
 };
 
 weivel_plugins *weivel_plugins_create(void) {
@@ -23,6 +24,7 @@ weivel_plugins *weivel_plugins_create(void) {
     if (plugins == NULL) {
         return NULL;
     }
+    weivel_list_init(&plugins->order);
     plugins->names = weivel_table_create();
     plugins->identities = weivel_table_create();
     if (plugins->names == NULL || plugins->identities == NULL) {
@@ -44,6 +46,7 @@ static void free_plugin(weivel_plugin *plugin) {
     }
     free(plugin->reported);
     free(plugin->declarations);
+    weivel_ledger_free_plugin(plugin);
     weivel_manifest_free(&plugin->manifest);
     free(plugin);
 }
@@ -90,6 +93,7 @@ static weivel_status add_plugin(weivel_plugins *plugins, weivel_plugin *plugin) 
     }
     plugin->index = plugins->count;
     plugins->items[plugins->count++] = plugin;
+    weivel_list_append(&plugins->order, &plugin->in_order);
     return WEIVEL_STATUS_OK;
 }
 
@@ -97,10 +101,15 @@ static void remove_plugin(weivel_plugins *plugins, weivel_plugin *plugin) {
     weivel_plugin *last = plugins->items[--plugins->count];
     plugins->items[plugin->index] = last;
     last->index = plugin->index;
+    weivel_list_remove(&plugin->in_order);
 }
 
 uint32_t weivel_plugins_count(const weivel_plugins *plugins) {
     return plugins->count;
+}
+
+const weivel_link *weivel_plugins_in_order(const weivel_plugins *plugins) {
+    return &plugins->order;
 }
 
 bool weivel_plugins_named(const weivel_plugins *plugins, const char *import_name) {
@@ -123,6 +132,7 @@ static weivel_plugin *new_plugin(void) {
     weivel_list_init(&plugin->provisions);
     weivel_list_init(&plugin->capability_watches);
     weivel_list_init(&plugin->capability_holdings);
+    weivel_list_init(&plugin->in_order);
     plugin->declared = weivel_table_create();
     plugin->reported_services = weivel_table_create();
     plugin->capabilities_reachable = weivel_table_create();
@@ -330,6 +340,7 @@ static weivel_status open_plugin(weivel_core *core, weivel_plugin *plugin, const
     }
     plugin->payload = options->payload;
     plugin->state = WEIVEL_PLUGIN_OPEN;
+    weivel_ledger_begin_activation(plugin);
     return WEIVEL_STATUS_OK;
 }
 

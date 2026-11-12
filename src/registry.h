@@ -138,9 +138,13 @@ typedef struct weivel_reach {
     const char *provider;
     /** The plugin's manifest entry consuming the id, NULL when it only provides it. */
     const weivel_service_want *wanted;
-    char detail[384];
-    char fix[384];
+    /** The refusal's texts, each built at its exact length and owned until weivel_reach_dispose; NULL for none. */
+    char *detail;
+    char *fix;
 } weivel_reach;
+
+/** Frees a reach's texts. */
+void weivel_reach_dispose(weivel_reach *reach);
 
 /**
  * Checks a plugin's attempt on `id`: the declaration first, then a provider mismatch against the owner registered

@@ -538,6 +538,75 @@ static void refusal_texts_name_the_services_it_consumes(void) {
     weivel_core_destroy(core);
 }
 
+static char *repeated(char letter, size_t count, const char *prefix) {
+    size_t prefix_length = strlen(prefix);
+    char *text = malloc(prefix_length + count + 1);
+    memcpy(text, prefix, prefix_length);
+    memset(text + prefix_length, letter, count);
+    text[prefix_length + count] = '\0';
+    return text;
+}
+
+/** Drains every event, counting the reach refusals, settlements and logs that carry `id` whole. */
+static uint32_t whole_mentions(weivel_core *core, const char *id) {
+    uint32_t whole = 0;
+    weivel_event event = WEIVEL_INIT(weivel_event);
+    while (weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_OK) {
+        const char *text = NULL;
+        if (event.kind == WEIVEL_EVENT_REACH_REFUSED) {
+            text = event.data.reach.refusal.detail;
+            CHECK(strstr(event.data.reach.refusal.fix, id) != NULL);
+        } else if (event.kind == WEIVEL_EVENT_WANT_SETTLED) {
+            text = event.data.want.refusal.detail;
+            CHECK(strstr(event.data.want.refusal.fix, id) != NULL);
+        } else if (event.kind == WEIVEL_EVENT_LOG) {
+            text = event.data.log.text;
+        }
+        if (text != NULL && strstr(text, id) != NULL) {
+            whole++;
+        }
+        weivel_event_release(&event);
+    }
+    return whole;
+}
+
+static void a_long_id_is_never_cut_from_a_reach_refusal(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    char *service = repeated('s', 1000, "far:");
+    char *capability = repeated('c', 1000, "far:");
+    char *declared = repeated('d', 1000, "notes:");
+    char *bound = repeated('o', 1000, "owner:");
+    plugin_spec notes = {.identity = "notes", .consumes = {declared}};
+    plugin_spec consumer = {.identity = "bound", .consumes = {bound}, .providers = {"someone"}};
+    plugin_spec owner = {.identity = "owner", .provides = {bound}};
+    weivel_handle plugin = open_spec(core, &notes);
+    weivel_handle binder = open_spec(core, &consumer);
+    weivel_handle provider = open_spec(core, &owner);
+    register_service(core, provider, bound);
+    forget(core);
+
+    weivel_handle got = 0;
+    CHECK(weivel_get_service(core, plugin, service, &got, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(whole_mentions(core, service) == 1);
+    weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
+    CHECK(weivel_capability_all(core, plugin, capability, &list, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(whole_mentions(core, capability) == 1);
+    CHECK(weivel_get_service(core, binder, bound, &got, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(whole_mentions(core, bound) == 1);
+
+    want_untimed(core, plugin, declared);
+    CHECK(weivel_release_plugin(core, plugin, NULL) == WEIVEL_STATUS_OK);
+    CHECK(whole_mentions(core, declared) == 1);
+    weivel_handle watch = 0;
+    CHECK(weivel_watch_service(core, plugin, declared, &watch, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(whole_mentions(core, declared) == 1);
+    free(bound);
+    free(declared);
+    free(capability);
+    free(service);
+    weivel_core_destroy(core);
+}
+
 int main(void) {
     delivers_a_late_registration_from_the_named_provider_to_a_want();
     delivers_a_late_registration_from_the_named_provider_to_a_watch();
@@ -558,5 +627,6 @@ int main(void) {
     a_declared_late_get_is_let_through_and_a_late_want_rejected();
     late_calls_are_logged_and_never_reported();
     refusal_texts_name_the_services_it_consumes();
+    a_long_id_is_never_cut_from_a_reach_refusal();
     return check_summary("reach_test");
 }

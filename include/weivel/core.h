@@ -1147,6 +1147,129 @@ WEIVEL_API weivel_status weivel_capability_list_release(weivel_capability_list *
 WEIVEL_API weivel_status weivel_watch_capability(weivel_core *core, weivel_handle plugin, const char *id,
                                                  weivel_handle *watch, uint32_t *pending_events);
 
+/** Where a plugin is in its life, as the ledger shows it. */
+typedef enum weivel_plugin_status {
+    /** Registered and never opened. */
+    WEIVEL_PLUGIN_STATUS_REGISTERED = 1,
+    /** Open, so its calls are on time. */
+    WEIVEL_PLUGIN_STATUS_ACTIVE = 2,
+    /** Quarantined, until it is opened again. */
+    WEIVEL_PLUGIN_STATUS_QUARANTINED = 3,
+    /** Released, until it is forgotten. */
+    WEIVEL_PLUGIN_STATUS_RELEASED = 4
+} weivel_plugin_status;
+
+/**
+ * One plugin's row of the ledger: what it declared and every relationship that passed through the core for it.
+ *
+ * The relationships describe one activation: opening the plugin starts them afresh, and releasing or quarantining
+ * it keeps them, so a stopped plugin's row still says what it did. Each list holds an id once, in the order the
+ * relationship was first made, and is never shortened when the relationship ends.
+ *
+ * - `capabilities_declared`: the capabilities its manifest provides; `permissions`: those its manifest asks for.
+ * - `services_provided`: each service id it registered; `capabilities_provided`: each capability it provided,
+ *   verified or not.
+ * - `services_consumed`: each service id it asked for by a get, a want or a watch its reach allowed, answered or
+ *   not.
+ *
+ * Every text and list lives in `storage`, private to the core, until weivel_ledger_row_release; in a row a
+ * weivel_ledger_snapshot carries, `storage` is NULL and the snapshot owns everything.
+ */
+typedef struct weivel_ledger_row {
+    uint32_t size;
+    weivel_handle plugin;
+    const char *import_name;
+    const char *identity;
+    /** A weivel_plugin_status. */
+    uint32_t status;
+    /** 1 when weivel_verify_activation has passed the plugin since it was last opened, else 0. */
+    uint32_t verified;
+    /**
+     * For a quarantined plugin whose activation weivel_verify_activation refused since it was last opened, that
+     * refusal; otherwise code NONE with NULL texts. A quarantine for any other reason is the caller's to record.
+     */
+    weivel_refusal refusal;
+    weivel_strings capabilities_declared;
+    weivel_strings permissions;
+    weivel_strings services_provided;
+    weivel_strings capabilities_provided;
+    weivel_strings services_consumed;
+    void *storage;
+} weivel_ledger_row;
+
+/**
+ * A refusal of reach reported for a plugin: it reached for the `kind` (a weivel_reach_kind) named `id` without
+ * declaring it.
+ */
+typedef struct weivel_declaration_refusal {
+    uint32_t size;
+    uint32_t kind;
+    weivel_handle plugin;
+    const char *id;
+} weivel_declaration_refusal;
+
+/**
+ * The ledger as it stood at one moment, filled into a struct the caller owns.
+ *
+ * - `rows`: one per plugin registered and not forgotten, in the order they were registered, as size-prefixed
+ *   elements read as weivel_numbers is.
+ * - `refusals`: every refusal of reach reported for those plugins, in the order reported, each once per plugin,
+ *   kind and id, likewise size-prefixed. A forgotten plugin's refusals go with its row.
+ *
+ * Everything lives in `storage`, private to the core, until weivel_ledger_release; an empty array is NULL with
+ * count 0.
+ */
+typedef struct weivel_ledger_snapshot {
+    uint32_t size;
+    const weivel_ledger_row *rows;
+    uint32_t row_count;
+    const weivel_declaration_refusal *refusals;
+    uint32_t refusal_count;
+    void *storage;
+} weivel_ledger_snapshot;
+
+/**
+ * Answers the whole ledger. Nothing in it changes when the core does afterwards.
+ *
+ * @param snapshot the caller's struct with `size` set and nothing held; on WEIVEL_STATUS_OK it must be passed to
+ * weivel_ledger_release.
+ * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_MALFORMED for a NULL core or snapshot, a snapshot below its first shape or
+ * still holding one, queuing a refusal when the core is given; WEIVEL_STATUS_OUT_OF_MEMORY.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_ledger(weivel_core *core, weivel_ledger_snapshot *snapshot, uint32_t *pending_events);
+
+/**
+ * Frees what a snapshot carries and leaves it empty.
+ *
+ * @return WEIVEL_STATUS_OK, also as a no-op for an empty snapshot or an all-zero one (size 0);
+ * WEIVEL_STATUS_MALFORMED for NULL or a size between 1 and the snapshot's first shape.
+ * Threading: any thread; needs no core.
+ */
+WEIVEL_API weivel_status weivel_ledger_release(weivel_ledger_snapshot *snapshot);
+
+/**
+ * Answers one plugin's row, as weivel_ledger would show it.
+ *
+ * @param row the caller's struct with `size` set and nothing held; on WEIVEL_STATUS_OK it must be passed to
+ * weivel_ledger_row_release.
+ * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for a handle that names no plugin, a forgotten one included
+ * (WEIVEL_REFUSAL_STALE_HANDLE), queuing a refusal; WEIVEL_STATUS_MALFORMED for a NULL core or row, or a row below
+ * its first shape or still holding one; WEIVEL_STATUS_OUT_OF_MEMORY.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_ledger_entry(weivel_core *core, weivel_handle plugin, weivel_ledger_row *row,
+                                             uint32_t *pending_events);
+
+/**
+ * Frees what a row weivel_ledger_entry answered carries and leaves it empty.
+ *
+ * @return WEIVEL_STATUS_OK, also as a no-op for an empty row or an all-zero one (size 0); WEIVEL_STATUS_MALFORMED
+ * for NULL or a size between 1 and the row's first shape.
+ * Threading: any thread; needs no core.
+ */
+WEIVEL_API weivel_status weivel_ledger_row_release(weivel_ledger_row *row);
+
 #ifdef __cplusplus
 }
 #endif

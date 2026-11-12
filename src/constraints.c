@@ -325,6 +325,7 @@ static weivel_registration *candidate(weivel_core *core, weivel_want *want) {
         weivel_reach mismatch;
         weivel_reach_refuse_provider(core, want->consumer, want->slot->id, want->provider,
                                      weivel_registry_owner_name(registration), &mismatch);
+        weivel_reach_dispose(&mismatch);
         return NULL;
     }
     return registration;

@@ -221,6 +221,7 @@ void weivel_registry_strip(weivel_core *core, weivel_plugin *plugin) {
         weivel_reach stopped;
         weivel_reach_stopped(want->slot->id, &stopped);
         weivel_waiting_reject(core, want, WEIVEL_REFUSAL_STOPPED, stopped.detail, stopped.fix);
+        weivel_reach_dispose(&stopped);
     }
     while (!weivel_list_empty(&plugin->holdings)) {
         revoke_holding(core, WEIVEL_RECORD_OF(plugin->holdings.next, weivel_holding, by_plugin));
@@ -356,7 +357,11 @@ static weivel_status register_for_plugin(weivel_core *core, weivel_handle owner,
     if (held != NULL && held->registration != NULL) {
         return refuse_taken(core, held->registration);
     }
-    return register_in_slot(core, plugin, id, handle);
+    status = register_in_slot(core, plugin, id, handle);
+    if (status == WEIVEL_STATUS_OK) {
+        weivel_ledger_note(core, plugin, WEIVEL_RELATIONSHIP_SERVICE_PROVIDED, id);
+    }
+    return status;
 }
 
 static bool is_id(const char *id) {
@@ -431,9 +436,11 @@ static weivel_status get_service(weivel_core *core, weivel_handle consumer, cons
     }
     weivel_reach reach;
     weivel_reach_check(core, plugin, id, &reach);
+    weivel_reach_dispose(&reach);
     if (reach.code != WEIVEL_REFUSAL_NONE) {
         return WEIVEL_STATUS_REFUSED;
     }
+    weivel_ledger_note(core, plugin, WEIVEL_RELATIONSHIP_SERVICE_CONSUMED, id);
     weivel_slot *slot = weivel_registry_find(core->registry, id);
     if (slot == NULL || slot->registration == NULL) {
         return WEIVEL_STATUS_NONE;
@@ -500,6 +507,7 @@ static weivel_status watch_service(weivel_core *core, weivel_handle consumer, co
     }
     weivel_reach reach;
     weivel_reach_check(core, plugin, id, &reach);
+    weivel_reach_dispose(&reach);
     if (reach.code != WEIVEL_REFUSAL_NONE) {
         return WEIVEL_STATUS_REFUSED;
     }
@@ -507,7 +515,11 @@ static weivel_status watch_service(weivel_core *core, weivel_handle consumer, co
         weivel_reach_log_late(core, plugin, "watch", id);
         return WEIVEL_STATUS_REFUSED;
     }
-    return add_watch(core, plugin, id, reach.provider, handle);
+    status = add_watch(core, plugin, id, reach.provider, handle);
+    if (status == WEIVEL_STATUS_OK) {
+        weivel_ledger_note(core, plugin, WEIVEL_RELATIONSHIP_SERVICE_CONSUMED, id);
+    }
+    return status;
 }
 
 weivel_status weivel_watch_service(weivel_core *core, weivel_handle plugin, const char *id, weivel_handle *watch,

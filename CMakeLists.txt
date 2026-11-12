@@ -30,6 +30,7 @@ set(WEIVEL_CORE_SOURCES
     src/deadlines.c
     src/events.c
     src/handles.c
+    src/ledger.c
     src/manifest.c
     src/mutex.c
     src/plugins.c
@@ -38,6 +39,7 @@ set(WEIVEL_CORE_SOURCES
     src/sized.c
     src/supports.c
     src/table.c
+    src/text.c
     src/waiting.c)
 
 function(weivel_core_target target)

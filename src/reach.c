@@ -1,9 +1,9 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "core_internal.h"
 #include "registry.h"
+#include "text.h"
 
 static weivel_reach_record *append_record(weivel_registry *registry, weivel_plugin *plugin, uint32_t kind,
                                           const char *id) {
@@ -62,8 +62,8 @@ static void report_once(weivel_core *core, weivel_plugin *plugin, const char *id
 
 static void refuse_undeclared(weivel_core *core, weivel_plugin *plugin, const char *id, weivel_reach *reach) {
     reach->code = WEIVEL_REFUSAL_UNDECLARED;
-    snprintf(reach->detail, sizeof reach->detail, "reached for service \"%s\", which it does not declare", id);
-    snprintf(reach->fix, sizeof reach->fix, "add \"%s\" to the services it consumes in its manifest", id);
+    reach->detail = weivel_text_format("reached for service \"%s\", which it does not declare", id);
+    reach->fix = weivel_text_format("add \"%s\" to the services it consumes in its manifest", id);
     report_once(core, plugin, id, reach);
 }
 
@@ -72,11 +72,11 @@ void weivel_reach_refuse_provider(weivel_core *core, weivel_plugin *plugin, cons
     reach->code = WEIVEL_REFUSAL_WRONG_PROVIDER;
     reach->late = false;
     reach->provider = provider;
-    snprintf(reach->detail, sizeof reach->detail, "reached for service \"%s\", which it binds to %s but %s provides",
-             id, provider, owner);
-    snprintf(reach->fix, sizeof reach->fix,
-             "install %s, or remove the provider from \"%s\" in the services it consumes in its manifest", provider,
-             id);
+    reach->wanted = NULL;
+    reach->detail =
+        weivel_text_format("reached for service \"%s\", which it binds to %s but %s provides", id, provider, owner);
+    reach->fix = weivel_text_format(
+        "install %s, or remove the provider from \"%s\" in the services it consumes in its manifest", provider, id);
     report_once(core, plugin, id, reach);
 }
 
@@ -100,10 +100,14 @@ void weivel_reach_check(weivel_core *core, weivel_plugin *plugin, const char *id
 
 static void log_late(weivel_core *core, const weivel_plugin *plugin, const char *what, const char *noun,
                      const char *id) {
-    char text[512];
-    snprintf(text, sizeof text, "ignored a late %s of %s \"%s\" from %s, which is no longer running", what, noun,
-             id, plugin->identity);
+    char *text = weivel_text_format("ignored a late %s of %s \"%s\" from %s, which is no longer running", what,
+                                    noun, id, plugin->identity);
+    if (text == NULL) {
+        weivel_core_log(core, WEIVEL_LOG_ERROR, "memory ran out describing a late call, which was ignored");
+        return;
+    }
     weivel_core_log(core, WEIVEL_LOG_WARNING, text);
+    free(text);
 }
 
 void weivel_reach_log_late(weivel_core *core, const weivel_plugin *plugin, const char *what, const char *id) {
@@ -120,22 +124,28 @@ bool weivel_reach_capability(weivel_core *core, weivel_plugin *plugin, const cha
         return true;
     }
     weivel_reach reach;
+    memset(&reach, 0, sizeof reach);
     reach.code = WEIVEL_REFUSAL_UNDECLARED;
-    reach.late = false;
-    reach.provider = NULL;
-    reach.wanted = NULL;
-    snprintf(reach.detail, sizeof reach.detail, "reached for capability \"%s\", which it does not declare", id);
-    snprintf(reach.fix, sizeof reach.fix, "add \"%s\" to the capabilities it consumes in its manifest", id);
+    reach.detail = weivel_text_format("reached for capability \"%s\", which it does not declare", id);
+    reach.fix = weivel_text_format("add \"%s\" to the capabilities it consumes in its manifest", id);
     report_kind_once(core, plugin, WEIVEL_REACH_CAPABILITY, id, &reach);
+    weivel_reach_dispose(&reach);
     return false;
 }
 
 void weivel_reach_stopped(const char *id, weivel_reach *reach) {
     memset(reach, 0, sizeof *reach);
     reach->code = WEIVEL_REFUSAL_STOPPED;
-    snprintf(reach->detail, sizeof reach->detail, "stopped while waiting for service \"%s\"", id);
-    snprintf(reach->fix, sizeof reach->fix,
-             "provide \"%s\" before this plugin is stopped, or get it and carry on without it", id);
+    reach->detail = weivel_text_format("stopped while waiting for service \"%s\"", id);
+    reach->fix =
+        weivel_text_format("provide \"%s\" before this plugin is stopped, or get it and carry on without it", id);
+}
+
+void weivel_reach_dispose(weivel_reach *reach) {
+    free(reach->detail);
+    free(reach->fix);
+    reach->detail = NULL;
+    reach->fix = NULL;
 }
 
 uint32_t weivel_reach_reported_count(const weivel_plugin *plugin) {
