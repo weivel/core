@@ -44,6 +44,30 @@ typedef struct search {
     indices stack;
 } tarjan_search;
 
+/**
+ * Every offer and need of the set with each distinct id numbered once, so a pass reads a need's providers directly
+ * instead of comparing strings against every plugin.
+ *
+ * - `need_start[unit]` to `need_start[unit + 1]` spans that unit's needs in `need_ids`, in manifest order.
+ * - `provider_start[id]` to `provider_start[id + 1]` spans the units offering `id` in `providers`, in input order.
+ */
+typedef struct provider_index {
+    uint32_t *need_start;
+    uint32_t *need_ids;
+    uint32_t *provider_start;
+    uint32_t *providers;
+    uint64_t *drawn_for;
+    uint64_t drawing;
+} provider_index;
+
+/** Open addressing over ids the manifests own; `slots` holds an id number plus one, 0 for an empty slot. */
+typedef struct id_table {
+    const char **keys;
+    uint32_t *slots;
+    uint32_t capacity;
+    uint32_t count;
+} id_table;
+
 typedef struct planner {
     uint32_t edge_source;
     const weivel_strings *host_provided;
@@ -59,6 +83,7 @@ typedef struct planner {
     indices order;
     refusal_list refusals;
     tarjan_search search;
+    provider_index index;
 } planner_state;
 
 static bool indices_push(indices *list, uint32_t value) {
@@ -76,15 +101,6 @@ static bool indices_push(indices *list, uint32_t value) {
     }
     list->items[list->count++] = value;
     return true;
-}
-
-static bool indices_has(const indices *list, uint32_t value) {
-    for (uint32_t index = 0; index < list->count; index++) {
-        if (list->items[index] == value) {
-            return true;
-        }
-    }
-    return false;
 }
 
 static char *joined(const char *before, const char *middle, const char *after) {
@@ -161,17 +177,6 @@ static const char *offer_id(const planner_state *planner, const plan_unit *unit,
                                                              : unit->manifest->services.provides.items[index].id;
 }
 
-static bool offers(const planner_state *planner, uint32_t provider, const char *id) {
-    const plan_unit *unit = &planner->units[provider];
-    uint32_t count = offer_count(planner, unit);
-    for (uint32_t index = 0; index < count; index++) {
-        if (strcmp(offer_id(planner, unit, index), id) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static uint32_t need_count(const planner_state *planner, const plan_unit *unit) {
     if (is_host(unit)) {
         return 0;
@@ -191,17 +196,156 @@ static bool need_is_mandatory(const planner_state *planner, const plan_unit *uni
            unit->manifest->services.consumes.items[index].optional == WEIVEL_CHOICE_NO;
 }
 
+static void *zeroed(size_t count, size_t size) {
+    return calloc(count == 0 ? 1 : count, size);
+}
+
+static uint64_t hash_of(const char *text) {
+    uint64_t hash = 14695981039346656037u;
+    for (const unsigned char *byte = (const unsigned char *)text; *byte != 0; byte++) {
+        hash = (hash ^ *byte) * 1099511628211u;
+    }
+    return hash;
+}
+
+/** Answers the number of `key`, numbering it when it is new; `table` has room for every key it will be given. */
+static uint32_t intern(id_table *table, const char *key) {
+    uint32_t slot = (uint32_t)(hash_of(key) & (table->capacity - 1));
+    while (table->slots[slot] != 0) {
+        uint32_t id = table->slots[slot] - 1;
+        if (strcmp(table->keys[id], key) == 0) {
+            return id;
+        }
+        slot = (slot + 1) & (table->capacity - 1);
+    }
+    table->keys[table->count] = key;
+    table->slots[slot] = ++table->count;
+    return table->count - 1;
+}
+
+static size_t declaration_total(const planner_state *planner) {
+    size_t total = 0;
+    for (uint32_t unit = 0; unit < planner->count; unit++) {
+        total += (size_t)offer_count(planner, &planner->units[unit]) + need_count(planner, &planner->units[unit]);
+    }
+    return total;
+}
+
+static bool open_table(id_table *table, size_t keys) {
+    uint32_t capacity = 8;
+    while (capacity < 2 * keys + 1) {
+        capacity *= 2;
+    }
+    table->capacity = capacity;
+    table->keys = zeroed(keys, sizeof *table->keys);
+    table->slots = zeroed(capacity, sizeof *table->slots);
+    return table->keys != NULL && table->slots != NULL;
+}
+
+static void number_needs(planner_state *planner, id_table *table) {
+    provider_index *index = &planner->index;
+    uint32_t written = 0;
+    for (uint32_t unit = 0; unit < planner->count; unit++) {
+        index->need_start[unit] = written;
+        uint32_t needs = need_count(planner, &planner->units[unit]);
+        for (uint32_t need = 0; need < needs; need++) {
+            index->need_ids[written++] = intern(table, need_id(planner, &planner->units[unit], need));
+        }
+    }
+    index->need_start[planner->count] = written;
+}
+
+static void count_providers(planner_state *planner, id_table *table, uint32_t *offer_ids, uint32_t *last_unit) {
+    uint32_t *provider_start = planner->index.provider_start;
+    uint32_t written = 0;
+    for (uint32_t unit = 0; unit < planner->count; unit++) {
+        uint32_t count = offer_count(planner, &planner->units[unit]);
+        for (uint32_t offer = 0; offer < count; offer++) {
+            uint32_t id = intern(table, offer_id(planner, &planner->units[unit], offer));
+            offer_ids[written++] = id;
+            if (last_unit[id] != unit + 1) {
+                last_unit[id] = unit + 1;
+                provider_start[id + 1]++;
+            }
+        }
+    }
+    for (uint32_t id = 0; id < table->count; id++) {
+        provider_start[id + 1] += provider_start[id];
+        last_unit[id] = 0;
+    }
+}
+
+static void place_providers(planner_state *planner, const id_table *table, const uint32_t *offer_ids,
+                            uint32_t *last_unit) {
+    provider_index *index = &planner->index;
+    uint32_t read = 0;
+    for (uint32_t unit = 0; unit < planner->count; unit++) {
+        uint32_t count = offer_count(planner, &planner->units[unit]);
+        for (uint32_t offer = 0; offer < count; offer++) {
+            uint32_t id = offer_ids[read++];
+            if (last_unit[id] != unit + 1) {
+                last_unit[id] = unit + 1;
+                index->providers[index->provider_start[id]++] = unit;
+            }
+        }
+    }
+    for (uint32_t id = table->count; id > 0; id--) {
+        index->provider_start[id] = index->provider_start[id - 1];
+    }
+    index->provider_start[0] = 0;
+}
+
+/** Lays each id's providers out contiguously in input order, a unit listed once per id however often it offers it. */
+static bool number_offers(planner_state *planner, id_table *table, size_t offers) {
+    provider_index *index = &planner->index;
+    uint32_t *offer_ids = zeroed(offers, sizeof *offer_ids);
+    uint32_t *last_unit = zeroed(table->capacity, sizeof *last_unit);
+    index->provider_start = zeroed((size_t)table->capacity + 1, sizeof *index->provider_start);
+    index->providers = zeroed(offers, sizeof *index->providers);
+    bool built = offer_ids != NULL && last_unit != NULL && index->provider_start != NULL && index->providers != NULL;
+    if (built) {
+        count_providers(planner, table, offer_ids, last_unit);
+        place_providers(planner, table, offer_ids, last_unit);
+    }
+    free(offer_ids);
+    free(last_unit);
+    return built;
+}
+
+static bool index_providers(planner_state *planner) {
+    size_t total = declaration_total(planner);
+    if (total > UINT32_MAX / 4) {
+        return false;
+    }
+    provider_index *index = &planner->index;
+    index->need_start = zeroed((size_t)planner->count + 1, sizeof *index->need_start);
+    index->need_ids = zeroed(total, sizeof *index->need_ids);
+    index->drawn_for = zeroed(planner->count, sizeof *index->drawn_for);
+    id_table table;
+    memset(&table, 0, sizeof table);
+    bool built = index->need_start != NULL && index->need_ids != NULL && index->drawn_for != NULL &&
+                 open_table(&table, total);
+    if (built) {
+        number_needs(planner, &table);
+        built = number_offers(planner, &table, total);
+    }
+    free(table.keys);
+    free(table.slots);
+    return built;
+}
+
 static bool draw_dependencies_of(planner_state *planner, uint32_t consumer) {
-    const plan_unit *unit = &planner->units[consumer];
+    provider_index *index = &planner->index;
     indices *dependencies = &planner->dependencies[consumer];
-    uint32_t needs = need_count(planner, unit);
-    for (uint32_t need = 0; need < needs; need++) {
-        const char *id = need_id(planner, unit, need);
-        for (uint32_t provider = 0; provider < planner->count; provider++) {
-            if (provider == consumer || planner->refused[provider] || !offers(planner, provider, id) ||
-                indices_has(dependencies, provider)) {
+    uint64_t drawing = ++index->drawing;
+    for (uint32_t need = index->need_start[consumer]; need < index->need_start[consumer + 1]; need++) {
+        uint32_t id = index->need_ids[need];
+        for (uint32_t entry = index->provider_start[id]; entry < index->provider_start[id + 1]; entry++) {
+            uint32_t provider = index->providers[entry];
+            if (provider == consumer || planner->refused[provider] || index->drawn_for[provider] == drawing) {
                 continue;
             }
+            index->drawn_for[provider] = drawing;
             if (!indices_push(dependencies, provider)) {
                 return false;
             }
@@ -309,21 +453,23 @@ static bool find_cycles(planner_state *planner) {
     return true;
 }
 
-static bool is_met(const planner_state *planner, const char *id) {
-    for (uint32_t provider = 0; provider < planner->count; provider++) {
-        if (!planner->unavailable[provider] && offers(planner, provider, id)) {
+static bool is_met(const planner_state *planner, uint32_t id) {
+    const provider_index *index = &planner->index;
+    for (uint32_t entry = index->provider_start[id]; entry < index->provider_start[id + 1]; entry++) {
+        if (!planner->unavailable[index->providers[entry]]) {
             return true;
         }
     }
     return false;
 }
 
-static const char *unmet_need(const planner_state *planner, const plan_unit *unit) {
+static const char *unmet_need(const planner_state *planner, uint32_t consumer) {
+    const plan_unit *unit = &planner->units[consumer];
+    uint32_t first = planner->index.need_start[consumer];
     uint32_t needs = need_count(planner, unit);
     for (uint32_t need = 0; need < needs; need++) {
-        const char *id = need_id(planner, unit, need);
-        if (need_is_mandatory(planner, unit, need) && !is_met(planner, id)) {
-            return id;
+        if (need_is_mandatory(planner, unit, need) && !is_met(planner, planner->index.need_ids[first + need])) {
+            return need_id(planner, unit, need);
         }
     }
     return NULL;
@@ -342,7 +488,7 @@ static int refuse_unmet(planner_state *planner) {
         if (planner->unavailable[index]) {
             continue;
         }
-        const char *need = unmet_need(planner, &planner->units[index]);
+        const char *need = unmet_need(planner, index);
         if (need == NULL) {
             continue;
         }
@@ -437,10 +583,6 @@ static bool admit_all(planner_state *planner, const weivel_handles *handles, con
     return true;
 }
 
-static void *zeroed(size_t count, size_t size) {
-    return calloc(count == 0 ? 1 : count, size);
-}
-
 static bool allocate(planner_state *planner, uint32_t capacity) {
     planner->units = zeroed(capacity, sizeof *planner->units);
     planner->refused = zeroed(capacity, sizeof *planner->refused);
@@ -485,6 +627,11 @@ static void free_planner(planner_state *planner, uint32_t capacity) {
     free(planner->search.frame_unit);
     free(planner->search.frame_position);
     free(planner->search.stack.items);
+    free(planner->index.need_start);
+    free(planner->index.need_ids);
+    free(planner->index.provider_start);
+    free(planner->index.providers);
+    free(planner->index.drawn_for);
 }
 
 /** The answer's one allocation, laid out in sections each rounded to 8 bytes, which aligns every element type. */
@@ -629,7 +776,8 @@ static weivel_status plan_activation(weivel_core *core, const weivel_handle *plu
     uint32_t capacity = count + 1;
     weivel_status status = WEIVEL_STATUS_OUT_OF_MEMORY;
     weivel_activation_plan answer = empty_plan();
-    if (allocate(&planner, capacity) && admit_all(&planner, core->handles, plugins, count)) {
+    if (allocate(&planner, capacity) && admit_all(&planner, core->handles, plugins, count) &&
+        index_providers(&planner)) {
         status = run_passes(&planner);
     }
     if (status == WEIVEL_STATUS_OK) {

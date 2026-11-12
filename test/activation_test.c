@@ -510,6 +510,28 @@ static void a_long_chain_is_ordered_and_a_long_cycle_reported(void) {
     free(units);
 }
 
+static void a_cascading_refusal_chain_of_2000_completes(void) {
+    enum { LENGTH = 2000 };
+    weivel_core *core = new_core();
+    static char names[LENGTH + 1][16];
+    static weivel_handle units[LENGTH];
+    for (uint32_t index = 0; index <= LENGTH; index++) {
+        snprintf(names[index], sizeof names[index], "link%u", index);
+    }
+    for (uint32_t index = 0; index < LENGTH; index++) {
+        units[index] = register_service_unit(core, names[index], names[index], names[index + 1]);
+    }
+    weivel_activation_plan plan = plan_of(core, units, LENGTH, WEIVEL_EDGES_SERVICES, NULL);
+    CHECK(plan.order_count == 0 && plan.cycle_count == 0 && plan.edge_count == 0);
+    CHECK(plan.refusal_count == LENGTH);
+    if (plan.refusal_count == LENGTH) {
+        check_unmet(&plan.refusals[0], units[LENGTH - 1], names[LENGTH]);
+        check_unmet(&plan.refusals[LENGTH - 1], units[0], names[1]);
+    }
+    release(&plan);
+    weivel_core_destroy(core);
+}
+
 static weivel_event drain(weivel_core *core) {
     weivel_event event = WEIVEL_INIT(weivel_event);
     CHECK(weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_OK);
@@ -612,6 +634,7 @@ int main(void) {
     a_stale_or_repeated_handle_is_refused_as_data();
     an_empty_set_plans_nothing();
     a_long_chain_is_ordered_and_a_long_cycle_reported();
+    a_cascading_refusal_chain_of_2000_completes();
     malformed_plan_calls_are_answered_not_crashed();
     release_is_a_no_op_on_nothing_held();
     a_newer_callers_larger_plan_has_its_unknown_fields_zeroed();
