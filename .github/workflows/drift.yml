@@ -1,0 +1,15 @@
+name: Drift
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    uses: intisy/workflows/.github/workflows/drift.yml@main
+    with:
+      kit_repository: weivel/conformance
+      role: core
+      checks: purity names core-gate core-sources benchmark
+      runners: '["ubuntu-latest","windows-latest","macos-latest"]'
