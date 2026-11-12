@@ -735,9 +735,16 @@ WEIVEL_API weivel_status weivel_plan_activation(weivel_core *core, const weivel_
 WEIVEL_API weivel_status weivel_activation_plan_release(weivel_activation_plan *plan);
 
 /**
- * The owner of the host's own services: a reserved handle no plugin is ever issued. A service registered under it
- * is exempt from namespacing, owned by no plugin so no release or quarantine takes it away, and registering its id
- * again replaces it.
+ * The host itself: a reserved handle no plugin is ever issued.
+ *
+ * As an owner, a service registered under it is exempt from namespacing, owned by no plugin so no release or
+ * quarantine takes it away, and registering its id again replaces it.
+ *
+ * As an asker, it may be passed as the plugin of weivel_get_service, weivel_want_service, weivel_watch_service,
+ * weivel_capability_all and weivel_watch_capability. The host is never fenced, so it reaches every id, declared by
+ * no manifest, and is never refused or reported for reach; it is never late; it holds what it is handed and is
+ * revoked it, by a WEIVEL_EVENT_REVOKED whose `plugin` is WEIVEL_HOST, exactly as a plugin is; and since no plugin
+ * stops it, its watches and wants end only by weivel_unregister or when the core is destroyed. It has no ledger row.
  */
 #define WEIVEL_HOST ((weivel_handle)UINT64_MAX)
 
@@ -877,7 +884,8 @@ WEIVEL_API weivel_status weivel_register_service(weivel_core *core, weivel_handl
 WEIVEL_API weivel_status weivel_unregister(weivel_core *core, weivel_handle handle, uint32_t *pending_events);
 
 /**
- * Answers the service registered under `id` now, as its registration handle, for a plugin that may reach it.
+ * Answers the service registered under `id` now, as its registration handle, for a plugin that may reach it, or
+ * for the host (WEIVEL_HOST), which reaches every id.
  *
  * Reach is checked in this order: the plugin must list `id` among the services it consumes or provides
  * (WEIVEL_REFUSAL_UNDECLARED); then, when it binds `id` to a provider and another owner holds it, it is refused
@@ -932,8 +940,9 @@ typedef struct weivel_want_options {
  * either way exactly once: weivel_advance at or past `now + timeout_millis` rejects it with
  * WEIVEL_REFUSAL_TIMED_OUT, and weivel_next_deadline reports the earliest such moment.
  *
- * Reach is checked as weivel_get_service checks it, and a refusal rejects the want at once. A late want, from a
- * plugin no longer running, is rejected with WEIVEL_REFUSAL_STOPPED and logged. A want the plugin still waits on
+ * Reach is checked as weivel_get_service checks it, and a refusal rejects the want at once; the host (WEIVEL_HOST)
+ * asks unfenced and is never late. A late want, from a plugin no longer running, is rejected with
+ * WEIVEL_REFUSAL_STOPPED and logged. A want the plugin still waits on
  * when it is released or quarantined is rejected the same way.
  *
  * A want is constrained when the plugin's manifest gives `id` constraints. It never settles on a registration
@@ -1014,8 +1023,8 @@ WEIVEL_API weivel_status weivel_report_capacity(weivel_core *core, weivel_handle
  * and nothing registered before the watch is replayed. A watch bound to another provider skips its registrations
  * without a report. The watch lasts until weivel_unregister or until the plugin is released or quarantined.
  *
- * Reach is checked as weivel_get_service checks it, and a refused watch is inert. A late watch is inert and logged
- * only, never reported.
+ * Reach is checked as weivel_get_service checks it, and a refused watch is inert; the host (WEIVEL_HOST) watches
+ * unfenced. A late watch is inert and logged only, never reported.
  *
  * @param watch receives the watch handle. Required; 0 on every answer but OK.
  * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for a refusal of reach, a late watch, a stale plugin or one never
@@ -1129,7 +1138,8 @@ typedef struct weivel_capability_list {
  *
  * Reach is checked first: the plugin must list `id` among the capabilities it consumes or provides, else it is
  * answered an empty list and refused (WEIVEL_REFUSAL_UNDECLARED), reported as a WEIVEL_EVENT_REACH_REFUSED of kind
- * WEIVEL_REACH_CAPABILITY once per plugin and id. Then a plugin no longer running is let through.
+ * WEIVEL_REACH_CAPABILITY once per plugin and id. Then a plugin no longer running is let through. The host
+ * (WEIVEL_HOST) reaches every id.
  *
  * The holder rule is the services' rule (weivel_unregister): a plugin holds each implementation this call or a
  * capability watch hearing it provided hands it, once however often, until the implementation is withdrawn or the
@@ -1166,8 +1176,8 @@ WEIVEL_API weivel_status weivel_capability_list_release(weivel_capability_list *
  * until weivel_unregister, or until the plugin is released or quarantined, which first withdraws what the plugin
  * itself provided, so a plugin watching its own capability hears its own implementation leave.
  *
- * Reach is checked as weivel_capability_all checks it, and a refused watch is inert. A late watch, from a plugin no
- * longer running, is inert and logged only, never reported.
+ * Reach is checked as weivel_capability_all checks it, and a refused watch is inert; the host (WEIVEL_HOST) watches
+ * unfenced. A late watch, from a plugin no longer running, is inert and logged only, never reported.
  *
  * @param watch receives the watch handle. Required; 0 on every answer but OK.
  * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for an undeclared id, a late watch, a stale plugin or one never

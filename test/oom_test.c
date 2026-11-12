@@ -486,6 +486,16 @@ static weivel_status host_wants(world *made) {
     return weivel_want_service(made->core, WEIVEL_HOST, "calendar:events", NULL, &want, NULL);
 }
 
+static weivel_status host_gets(world *made) {
+    weivel_handle got = 0;
+    return weivel_get_service(made->core, WEIVEL_HOST, "calendar:events", &got, NULL);
+}
+
+static weivel_status host_watches(world *made) {
+    weivel_handle watch = 0;
+    return weivel_watch_service(made->core, WEIVEL_HOST, "calendar:events", &watch, NULL);
+}
+
 static weivel_status host_watches_screens(world *made) {
     weivel_handle watch = 0;
     return weivel_watch_capability(made->core, WEIVEL_HOST, "screens", &watch, NULL);
@@ -557,7 +567,9 @@ int main(void) {
     sweep("release with holders, watches and wants", world_at_full_stretch, release_calendar);
     sweep("quarantine with holders, watches and wants", world_at_full_stretch, quarantine_calendar);
     sweep("forget a released plugin that still holds", world_with_a_late_holder, forget_notes);
+    sweep("get as the host", world_with_registration, host_gets);
     sweep("want as the host", make_world, host_wants);
+    sweep("watch a service as the host", make_world, host_watches);
     sweep("watch a capability as the host", world_watching_screens, host_watches_screens);
     sweep("all as the host", world_with_two_verified_screens, host_all);
     sweep("a yes that settles a constrained want", world_with_a_served_question, picky_is_served);

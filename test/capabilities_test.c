@@ -968,7 +968,31 @@ static void many_providers_keep_verify_order(void) {
     weivel_core_destroy(core);
 }
 
+/** The host reaches any capability unfenced, holds what `all` and its watch hand it, and is revoked it. */
+static void the_host_reaches_every_capability_and_holds_like_a_plugin(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    weivel_handle watch = watch_capability(core, WEIVEL_HOST, "screens");
+    weivel_handle calendar = open_capabilities(core, "calendar", SCREENS, NONE);
+    weivel_handle implementation = provide(core, calendar, "screens");
+    CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    CHECK(count_all(core, WEIVEL_HOST, "screens") == 1);
+    CHECK(count_all(core, WEIVEL_HOST, "nobody:declares") == 0);
+    drain(core);
+    CHECK(capability_events(watch, WEIVEL_CAPABILITY_PROVIDED) == 1);
+    CHECK(count_kind(WEIVEL_EVENT_REACH_REFUSED) == 0);
+    CHECK(holdings_now(core) == 1);
+    forget(core);
+    CHECK(weivel_quarantine_plugin(core, calendar, NULL, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(revocations_to(WEIVEL_HOST, implementation) == 1);
+    CHECK(capability_events(watch, WEIVEL_CAPABILITY_WITHDRAWN) == 1);
+    CHECK(holdings_now(core) == 0);
+    CHECK(weivel_unregister(core, watch, NULL) == WEIVEL_STATUS_OK);
+    weivel_core_destroy(core);
+}
+
 int main(void) {
+    the_host_reaches_every_capability_and_holds_like_a_plugin();
     a_released_consumer_stops_hearing();
     a_throwing_listener_does_not_silence_the_others();
     answers_every_verified_implementation_in_activation_order();
