@@ -1,0 +1,9 @@
+{
+  "format": 1,
+  "importName": "core",
+  "description": "The weivel plugin engine in C: compatibility, activation order, the service and capability registry, waiting and revocation, and the ledger, behind a struct ABI that never calls out.",
+  "topics": [
+    "weivel"
+  ],
+  "dependencies": []
+}
