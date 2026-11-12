@@ -420,6 +420,41 @@ void weivel_manifest_free(weivel_owned_manifest *owned) {
     memset(owned, 0, sizeof *owned);
 }
 
+bool weivel_elements_readable(const void *items, uint32_t count, size_t first_size) {
+    element_list list = list_of(items, count);
+    if (count == 0) {
+        return true;
+    }
+    if (items == NULL || list.stride < first_size) {
+        return false;
+    }
+    for (uint32_t index = 1; index < count; index++) {
+        if (weivel_sized_size(element_at(&list, index)) != list.stride) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void weivel_element_read(const void *items, uint32_t count, uint32_t index, void *own, size_t own_size) {
+    element_list list = list_of(items, count);
+    weivel_sized_read(own, own_size, element_at(&list, index));
+}
+
+bool weivel_numbers_readable(const weivel_numbers *numbers) {
+    if (!weivel_elements_readable(numbers->items, numbers->count, WEIVEL_NUMBER_FIRST_SIZE)) {
+        return false;
+    }
+    element_list list = list_of(numbers->items, numbers->count);
+    for (uint32_t index = 0; index < list.count; index++) {
+        weivel_number number = number_at(&list, index);
+        if (is_empty(number.name) || number_named_before(&list, index, number.name)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool weivel_strings_copy(const weivel_strings *source, weivel_strings *copy, void **storage) {
     arena measuring = {NULL, 0};
     keep_strings(&measuring, source);

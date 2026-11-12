@@ -17,6 +17,10 @@ typedef struct seen {
     uint32_t code;
     uint32_t change;
     uint32_t level;
+    uint32_t degraded;
+    uint64_t request;
+    uint32_t question;
+    uint32_t constraint_count;
     char id[128];
     char detail[512];
     char fix[512];
@@ -56,7 +60,19 @@ static inline void note(seen *item, const weivel_event *event) {
         item->subject = event->data.want.want;
         item->plugin = event->data.want.plugin;
         item->implementation = event->data.want.implementation;
+        item->degraded = event->data.want.degraded;
         note_refusal(item, &event->data.want.refusal);
+        break;
+    case WEIVEL_EVENT_CAPACITY_WANTED:
+        item->subject = event->data.capacity.want;
+        item->plugin = event->data.capacity.plugin;
+        item->implementation = event->data.capacity.registration;
+        item->request = event->data.capacity.request;
+        item->question = event->data.capacity.question;
+        item->constraint_count = event->data.capacity.constraints.count;
+        if (event->data.capacity.constraints.count > 0) {
+            copy_text(item->id, sizeof item->id, event->data.capacity.constraints.items[0].name);
+        }
         break;
     case WEIVEL_EVENT_WATCH:
         item->subject = event->data.watch.watch;

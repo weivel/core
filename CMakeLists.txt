@@ -24,6 +24,7 @@ endfunction()
 set(WEIVEL_CORE_SOURCES
     src/activation.c
     src/compatibility.c
+    src/constraints.c
     src/core.c
     src/deadlines.c
     src/events.c

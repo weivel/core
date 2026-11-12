@@ -26,6 +26,8 @@ typedef struct weivel_registration {
     weivel_slot *slot;
     /** NULL for a service the host registered. */
     weivel_plugin *owner;
+    /** What the owner's manifest advertises for the id, pointing into it; NULL when it advertises nothing. */
+    const weivel_numbers *advertised;
     weivel_link by_owner;
     weivel_link holdings;
 } weivel_registration;
@@ -44,12 +46,16 @@ typedef struct weivel_holding {
     weivel_link by_plugin;
 } weivel_holding;
 
+struct weivel_constrained;
+
 /** A want still waiting. `provider` points into the consumer's manifest, which outlives it. */
 typedef struct weivel_want {
     weivel_handle handle;
     weivel_slot *slot;
     weivel_plugin *consumer;
     const char *provider;
+    /** The poll state of a want whose declaration carries constraints, NULL for any other. */
+    struct weivel_constrained *constrained;
     bool timed;
     int64_t timeout_millis;
     weivel_link by_slot;
@@ -75,6 +81,8 @@ typedef struct weivel_registry {
     uint32_t holding_count;
     /** The sequence the next reported refusal takes, ordering reports across plugins. */
     uint64_t next_report;
+    /** The last request a capacity question was given; each question takes the next, so none repeats. */
+    uint64_t last_request;
     /**
      * When set, the next holding answers out of memory and the switch clears.
      * @implNote Exists so a test can reach the out-of-memory path of a holding without exhausting the heap.
@@ -126,6 +134,8 @@ typedef struct weivel_reach {
     bool late;
     /** The provider the plugin binds the id to, NULL for any. */
     const char *provider;
+    /** The plugin's manifest entry consuming the id, NULL when it only provides it. */
+    const weivel_service_want *wanted;
     char detail[384];
     char fix[384];
 } weivel_reach;
@@ -151,10 +161,12 @@ uint32_t weivel_reach_reported_count(const weivel_plugin *plugin);
 const weivel_reach_record *weivel_reach_reported_at(const weivel_plugin *plugin, uint32_t index);
 
 /**
- * Settles a want with a registration, which its consumer then holds. On WEIVEL_STATUS_OUT_OF_MEMORY the holding
- * could not be recorded, so the want is left exactly as it was, still waiting.
+ * Settles a want with a registration, which its consumer then holds, `degraded` when it is a constrained want's
+ * acceptance of a provider that never met its constraints. On WEIVEL_STATUS_OUT_OF_MEMORY the holding could not be
+ * recorded, so the want is left exactly as it was, still waiting.
  */
-weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration);
+weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration,
+                                    bool degraded);
 
 /** Rejects a want with a refusal. */
 void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, const char *detail, const char *fix);
@@ -162,11 +174,18 @@ void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, 
 /** Withdraws a want without settling it. */
 void weivel_waiting_withdraw(weivel_core *core, weivel_want *want);
 
-/** Settles, in the order they asked, every want on a slot that accepts what is registered there now. */
+/**
+ * Settles, in the order they asked, every want on a slot that accepts what is registered there now. A constrained
+ * want is passed over: it settles only on a poll.
+ */
 void weivel_waiting_arrival(weivel_core *core, weivel_slot *slot);
 
-/** Rejects the want a deadline named, when it still waits. */
-void weivel_waiting_time_out(weivel_core *core, weivel_handle subject);
+/**
+ * Acts on a deadline that is due at `now`: a timed want is rejected, a constrained one moves to its next poll or
+ * question. Either way its deadline is replaced or removed, so each call moves the want on, and a deadline whose
+ * want is gone is removed.
+ */
+void weivel_waiting_due(weivel_core *core, weivel_handle subject, int64_t now);
 
 /** Frees a want's record without an event or a deadline, for destroy. */
 void weivel_waiting_free(weivel_want *want);

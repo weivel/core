@@ -170,6 +170,46 @@ weivel_status weivel_events_push_revoked(weivel_events *events, const weivel_rev
     return weivel_events_push(events, &event);
 }
 
+/** Copies core-owned numbers, at today's size, into one allocation an event will own; NULL when memory runs out. */
+static weivel_number *copy_numbers(const weivel_numbers *numbers) {
+    size_t bytes = (size_t)numbers->count * sizeof(weivel_number);
+    for (uint32_t index = 0; index < numbers->count; index++) {
+        bytes += strlen(numbers->items[index].name) + 1;
+    }
+    weivel_number *items = malloc(bytes);
+    if (items == NULL) {
+        return NULL;
+    }
+    char *cursor = (char *)items + (size_t)numbers->count * sizeof(weivel_number);
+    for (uint32_t index = 0; index < numbers->count; index++) {
+        size_t length = strlen(numbers->items[index].name) + 1;
+        memcpy(cursor, numbers->items[index].name, length);
+        items[index].size = (uint32_t)sizeof items[index];
+        items[index].name = cursor;
+        items[index].value = numbers->items[index].value;
+        cursor += length;
+    }
+    return items;
+}
+
+weivel_status weivel_events_push_capacity(weivel_events *events, const weivel_capacity_event *asked,
+                                          const weivel_numbers *constraints) {
+    weivel_event event = empty_event(WEIVEL_EVENT_CAPACITY_WANTED);
+    event.data.capacity = *asked;
+    event.data.capacity.constraints.items = NULL;
+    event.data.capacity.constraints.count = 0;
+    if (constraints != NULL && constraints->count > 0) {
+        weivel_number *items = copy_numbers(constraints);
+        if (items == NULL) {
+            return WEIVEL_STATUS_OUT_OF_MEMORY;
+        }
+        event.storage = items;
+        event.data.capacity.constraints.items = items;
+        event.data.capacity.constraints.count = constraints->count;
+    }
+    return weivel_events_push(events, &event);
+}
+
 weivel_status weivel_events_push_reach(weivel_events *events, uint32_t kind, weivel_handle plugin, const char *id,
                                        uint32_t code, const char *detail, const char *fix) {
     weivel_event event = empty_event(WEIVEL_EVENT_REACH_REFUSED);

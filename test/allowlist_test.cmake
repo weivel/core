@@ -15,11 +15,13 @@ set(allowed_from_msvc_inline_snprintf
     __stdio_common_vsprintf "?_OptionsStorage@?1??__local_stdio_printf_options@@9@9")
 set(allowed_from_msvc_debug_runtime_checks _RTC_CheckStackVars _RTC_InitBase _RTC_Shutdown)
 set(allowed_from_msvc_buffer_security_check __security_check_cookie __security_cookie __GSHandlerCheck)
+set(allowed_from_msvc_floating_point_marker _fltused)
 set(allowed_from_the_stack_protector __stack_chk_fail __stack_chk_guard)
 set(allowed_from_fortified_allowed_calls __memcpy_chk __memmove_chk __memset_chk __snprintf_chk)
 set(allowed_from_the_toolchain
     ${allowed_from_msvc_inline_snprintf} ${allowed_from_msvc_debug_runtime_checks}
-    ${allowed_from_msvc_buffer_security_check} ${allowed_from_the_stack_protector}
+    ${allowed_from_msvc_buffer_security_check} ${allowed_from_msvc_floating_point_marker}
+    ${allowed_from_the_stack_protector}
     ${allowed_from_fortified_allowed_calls})
 
 set(allowed_in_the_mutex_only

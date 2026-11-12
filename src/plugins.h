@@ -21,6 +21,9 @@ typedef struct weivel_declaration {
     const char *id;
     const char *provider;
     bool consumed;
+    /** The manifest's entries for the id, NULL where it does not consume or does not provide it. */
+    const weivel_service_want *wanted;
+    const weivel_service_offer *offered;
 } weivel_declaration;
 
 /** One reported refusal of reach, the shape the ledger exposes; `sequence` orders reports across plugins. */

@@ -117,8 +117,20 @@ static void remove_entry(weivel_deadlines *deadlines, deadline *entry) {
     free(entry);
 }
 
+/** Moves an existing deadline to `at`, as though added now, which needs no memory and so cannot fail. */
+static void move_entry(weivel_deadlines *deadlines, deadline *entry, int64_t at) {
+    entry->at = at;
+    entry->order = deadlines->next_order++;
+    rise(deadlines, entry);
+    sink(deadlines, entry);
+}
+
 weivel_status weivel_deadlines_add(weivel_deadlines *deadlines, int64_t at, weivel_handle subject) {
-    weivel_deadlines_cancel(deadlines, subject);
+    deadline *existing = weivel_table_find(deadlines->by_subject, &subject, sizeof subject);
+    if (existing != NULL) {
+        move_entry(deadlines, existing, at);
+        return WEIVEL_STATUS_OK;
+    }
     if (deadlines->count == deadlines->capacity && !grow(deadlines)) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -155,11 +167,18 @@ bool weivel_deadlines_earliest(const weivel_deadlines *deadlines, int64_t *at) {
     return true;
 }
 
-bool weivel_deadlines_take_due(weivel_deadlines *deadlines, int64_t now, weivel_handle *subject) {
+bool weivel_deadlines_next_due(const weivel_deadlines *deadlines, int64_t now, weivel_handle *subject) {
     if (deadlines->count == 0 || deadlines->heap[0]->at > now) {
         return false;
     }
     *subject = deadlines->heap[0]->subject;
+    return true;
+}
+
+bool weivel_deadlines_take_due(weivel_deadlines *deadlines, int64_t now, weivel_handle *subject) {
+    if (!weivel_deadlines_next_due(deadlines, now, subject)) {
+        return false;
+    }
     remove_entry(deadlines, deadlines->heap[0]);
     return true;
 }

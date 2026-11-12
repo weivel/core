@@ -43,4 +43,16 @@ bool weivel_strings_readable(const weivel_strings *strings);
 /** Copies a readable list of strings into one allocation, `*storage`; false when memory runs out. */
 bool weivel_strings_copy(const weivel_strings *source, weivel_strings *copy, void **storage);
 
+/**
+ * Whether a caller's list of size-prefixed elements can be read: items present when counted, the first element's
+ * size at least `first_size`, and every element declaring the same.
+ */
+bool weivel_elements_readable(const void *items, uint32_t count, size_t first_size);
+
+/** Reads element `index` of a readable list into the core's own full-size struct, defaulting what it lacks. */
+void weivel_element_read(const void *items, uint32_t count, uint32_t index, void *own, size_t own_size);
+
+/** Whether a caller's numbers can be read, every name non-empty and none twice. */
+bool weivel_numbers_readable(const weivel_numbers *numbers);
+
 #endif
