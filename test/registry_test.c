@@ -892,7 +892,7 @@ static void the_host_reaches_every_service_and_holds_like_a_plugin(void) {
     weivel_ledger_snapshot snapshot = WEIVEL_INIT(weivel_ledger_snapshot);
     CHECK(weivel_ledger(core, &snapshot, NULL) == WEIVEL_STATUS_OK);
     CHECK(snapshot.row_count == 2 && snapshot.refusal_count == 0);
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
     weivel_core_destroy(core);
 }
 

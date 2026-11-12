@@ -69,7 +69,7 @@ static void put_ledger(weivel_core *core, picture *into) {
         put(into, "reported %llu %llu %llu ", refusal->kind, refusal->plugin, refusal->code);
         put_text(into, refusal->id);
     }
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
 }
 
 /** Drains the queue into the picture, every event but a log, which the core may drop, by its kind and handles. */
@@ -257,7 +257,7 @@ static void get_events(world *made, weivel_handle plugin) {
 
 static void all_screens(world *made, weivel_handle plugin) {
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    CHECK(weivel_capability_all(made->core, plugin, "screens", &list, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_all_capabilities(made->core, plugin, "screens", &list, NULL) == WEIVEL_STATUS_OK);
     weivel_capability_list_release(&list);
 }
 
@@ -417,7 +417,7 @@ static void world_with_two_verified_screens(world *made) {
 
 static weivel_status notes_all(world *made) {
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    weivel_status status = weivel_capability_all(made->core, made->notes, "screens", &list, NULL);
+    weivel_status status = weivel_all_capabilities(made->core, made->notes, "screens", &list, NULL);
     weivel_capability_list_release(&list);
     return status;
 }
@@ -503,7 +503,7 @@ static weivel_status host_watches_screens(world *made) {
 
 static weivel_status host_all(world *made) {
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
-    weivel_status status = weivel_capability_all(made->core, WEIVEL_HOST, "screens", &list, NULL);
+    weivel_status status = weivel_all_capabilities(made->core, WEIVEL_HOST, "screens", &list, NULL);
     weivel_capability_list_release(&list);
     return status;
 }

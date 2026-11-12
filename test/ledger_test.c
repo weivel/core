@@ -122,7 +122,7 @@ static void lists_each_plugin_in_registration_order_with_what_it_declared(void) 
         CHECK(other->plugin == second);
         check_text(other->identity, "notes", "identity defaults to the import name");
     }
-    CHECK(weivel_ledger_release(&snapshot) == WEIVEL_STATUS_OK);
+    CHECK(weivel_ledger_snapshot_release(&snapshot) == WEIVEL_STATUS_OK);
     CHECK(snapshot.storage == NULL && snapshot.rows == NULL && snapshot.row_count == 0);
     weivel_core_destroy(core);
 }
@@ -336,7 +336,7 @@ static void a_forgotten_plugin_is_gone_from_the_ledger(void) {
     weivel_ledger_snapshot snapshot = snapshot_of(core);
     CHECK(snapshot.row_count == 3);
     CHECK(snapshot.refusal_count == 2);
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
 
     forget(core);
     CHECK(weivel_forget_plugin(core, a, NULL) == WEIVEL_STATUS_OK);
@@ -351,7 +351,7 @@ static void a_forgotten_plugin_is_gone_from_the_ledger(void) {
         CHECK(refusal_at(&snapshot, 0)->plugin == c);
         check_text(refusal_at(&snapshot, 0)->id, "nowhere:y", "the remaining refusal");
     }
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
 
     weivel_ledger_row row = WEIVEL_INIT(weivel_ledger_row);
     CHECK(weivel_ledger_entry(core, a, &row, NULL) == WEIVEL_STATUS_REFUSED);
@@ -371,7 +371,7 @@ static void lists_refusals_in_the_order_they_were_reported(void) {
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
     CHECK(weivel_get_service(core, a, "z:one", &got, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(weivel_get_service(core, b, "z:two", &got, NULL) == WEIVEL_STATUS_REFUSED);
-    CHECK(weivel_capability_all(core, a, "z:one", &list, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_all_capabilities(core, a, "z:one", &list, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(weivel_get_service(core, a, "z:one", &got, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(weivel_get_service(core, b, "z:zero", &got, NULL) == WEIVEL_STATUS_REFUSED);
 
@@ -390,7 +390,7 @@ static void lists_refusals_in_the_order_they_were_reported(void) {
             check_text(refusal->id, ids[index], "refusal in report order");
         }
     }
-    weivel_ledger_release(&snapshot);
+    weivel_ledger_snapshot_release(&snapshot);
     weivel_core_destroy(core);
 }
 
@@ -414,7 +414,7 @@ static void a_snapshot_outlives_the_changes_and_the_core(void) {
         check_strings(&row_at(&snapshot, 0)->services_consumed, consumed, "snapshot after destroy");
     }
     check_text(row.import_name, "notes", "row after destroy");
-    CHECK(weivel_ledger_release(&snapshot) == WEIVEL_STATUS_OK);
+    CHECK(weivel_ledger_snapshot_release(&snapshot) == WEIVEL_STATUS_OK);
     CHECK(weivel_ledger_row_release(&row) == WEIVEL_STATUS_OK);
 }
 
@@ -435,14 +435,14 @@ static void malformed_ledger_calls_are_answered_as_values(void) {
     CHECK(weivel_ledger(core, &snapshot, &pending) == WEIVEL_STATUS_OK);
     CHECK(snapshot.row_count == 0 && snapshot.rows == NULL && snapshot.storage != NULL);
     CHECK(weivel_ledger(core, &snapshot, NULL) == WEIVEL_STATUS_MALFORMED);
-    CHECK(weivel_ledger_release(&snapshot) == WEIVEL_STATUS_OK);
-    CHECK(weivel_ledger_release(&snapshot) == WEIVEL_STATUS_OK);
+    CHECK(weivel_ledger_snapshot_release(&snapshot) == WEIVEL_STATUS_OK);
+    CHECK(weivel_ledger_snapshot_release(&snapshot) == WEIVEL_STATUS_OK);
 
-    CHECK(weivel_ledger_release(NULL) == WEIVEL_STATUS_MALFORMED);
-    CHECK(weivel_ledger_release(&small) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_ledger_snapshot_release(NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_ledger_snapshot_release(&small) == WEIVEL_STATUS_MALFORMED);
     weivel_ledger_snapshot zero;
     memset(&zero, 0, sizeof zero);
-    CHECK(weivel_ledger_release(&zero) == WEIVEL_STATUS_OK);
+    CHECK(weivel_ledger_snapshot_release(&zero) == WEIVEL_STATUS_OK);
     CHECK(weivel_ledger_row_release(NULL) == WEIVEL_STATUS_MALFORMED);
     weivel_ledger_row zero_row;
     memset(&zero_row, 0, sizeof zero_row);
