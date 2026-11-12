@@ -192,6 +192,9 @@ static weivel_number *copy_numbers(const weivel_numbers *numbers) {
     return items;
 }
 
+_Static_assert(sizeof(weivel_capacity_event) <= WEIVEL_EVENT_PAYLOAD_WORDS * sizeof(uint64_t),
+               "a capacity event must fit the event's payload union");
+
 weivel_status weivel_events_push_capacity(weivel_events *events, const weivel_capacity_event *asked,
                                           const weivel_numbers *constraints) {
     weivel_event event = empty_event(WEIVEL_EVENT_CAPACITY_WANTED);

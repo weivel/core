@@ -47,6 +47,10 @@ typedef struct weivel_constrained {
     uint64_t request;
     weivel_handle asked;
     int64_t closes;
+    /** Whether a budget was given; without one the want polls until it is served, and the budget is never spent. */
+    bool bounded;
+    /** Whether the latest question could not be queued, so its window ending is no answer from the provider. */
+    bool unasked;
     /** What the latest answered poll saw, advertised claims overlaid with live attributes; for texts only. */
     weivel_kept_numbers seen;
     bool answered;
@@ -216,7 +220,7 @@ static int64_t poll_at(const weivel_constrained *constrained, int64_t now) {
 }
 
 static bool is_last_poll(const weivel_constrained *constrained) {
-    return constrained->poll_index >= constrained->last_poll;
+    return constrained->bounded && constrained->poll_index >= constrained->last_poll;
 }
 
 /** The value `name` has among kept numbers, or NULL. */
@@ -346,7 +350,13 @@ static weivel_status ask(weivel_core *core, weivel_want *want, weivel_registrati
     uint32_t question = phase == PHASE_ATTRIBUTES ? WEIVEL_CAPACITY_ATTRIBUTES : WEIVEL_CAPACITY_SERVE;
     weivel_capacity_event asked = {want->handle, want->consumer->handle, registration->handle, constrained->request,
                                    question, {NULL, 0}};
-    weivel_events_push_capacity(core->events, &asked, unconstrained ? NULL : &constrained->wanted->constraints);
+    const weivel_numbers *constraints = unconstrained ? NULL : &constrained->wanted->constraints;
+    constrained->unasked = weivel_events_push_capacity(core->events, &asked, constraints) != WEIVEL_STATUS_OK;
+    if (constrained->unasked) {
+        constrained->request = 0;
+        weivel_core_log(core, WEIVEL_LOG_ERROR,
+                        "memory ran out asking a provider for a want, so the question was never put");
+    }
     return WEIVEL_STATUS_OK;
 }
 
@@ -434,18 +444,20 @@ static void degraded_report(weivel_core *core, const weivel_want *want, const we
 
 /**
  * Settles the want with the provider that said yes. Degradation is never silent: what was accepted is reported
- * before it is handed over, once the holding is sure.
+ * before it is handed over. The holding is recorded first, so the settlement after it cannot fail; when it cannot be
+ * recorded nothing changes, the question stays open, and the same yes may be answered again.
  */
-static void serve(weivel_core *core, weivel_want *want, weivel_registration *registration, bool degraded) {
-    if (degraded && weivel_registry_hold(core, registration, want->consumer) == WEIVEL_STATUS_OK) {
+static weivel_status serve(weivel_core *core, weivel_want *want, weivel_registration *registration, bool degraded) {
+    if (weivel_registry_hold(core, registration, want->consumer) != WEIVEL_STATUS_OK) {
+        weivel_core_log(core, WEIVEL_LOG_ERROR,
+                        "memory ran out holding a service for a want, so its question stays open");
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    if (degraded) {
         degraded_report(core, want, registration);
     }
-    if (weivel_waiting_settle(core, want, registration, degraded) != WEIVEL_STATUS_OK) {
-        weivel_core_log(core, WEIVEL_LOG_ERROR, "memory ran out settling a want, so it still waits");
-        if (want->constrained->phase == PHASE_SERVE) {
-            want->constrained->phase = PHASE_RESTING;
-        }
-    }
+    weivel_waiting_settle(core, want, registration, degraded);
+    return WEIVEL_STATUS_OK;
 }
 
 /** Ends a poll with nothing to serve: the last one spends the budget, any other waits for the next poll. */
@@ -463,13 +475,15 @@ weivel_status weivel_constraints_start(weivel_core *core, weivel_want *want, con
     if (constrained == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    bool budgeted = options->budgeted == WEIVEL_CHOICE_YES;
     constrained->wanted = wanted;
     constrained->start = options->now;
-    constrained->budget = budgeted ? options->budget_millis : WEIVEL_DEFAULT_BUDGET_MILLIS;
-    constrained->poll = budgeted ? options->poll_millis : WEIVEL_DEFAULT_POLL_MILLIS;
+    constrained->bounded = options->budgeted == WEIVEL_CHOICE_YES;
+    constrained->budget = options->budget_millis;
+    constrained->poll = options->poll_millis;
     constrained->last_poll =
-        constrained->budget / constrained->poll + (constrained->budget % constrained->poll != 0 ? 1 : 0);
+        constrained->bounded
+            ? constrained->budget / constrained->poll + (constrained->budget % constrained->poll != 0 ? 1 : 0)
+            : INT64_MAX;
     want->constrained = constrained;
     log_unknown(core, want);
     return begin_poll(core, want, 0);
@@ -478,6 +492,17 @@ weivel_status weivel_constraints_start(weivel_core *core, weivel_want *want, con
 void weivel_constraints_due(weivel_core *core, weivel_want *want, int64_t now) {
     weivel_constrained *constrained = want->constrained;
     constrained->request = 0;
+    bool degrading = constrained->phase == PHASE_DEGRADE_CONSTRAINED ||
+                     constrained->phase == PHASE_DEGRADE_UNCONSTRAINED;
+    if (degrading && constrained->unasked) {
+        weivel_registration *again = candidate(core, want);
+        if (again == NULL) {
+            reject_unmet(core, want, NULL);
+        } else {
+            ask(core, want, again, constrained->phase, add_saturated(now, constrained->poll));
+        }
+        return;
+    }
     if (constrained->phase == PHASE_DEGRADE_CONSTRAINED) {
         weivel_registration *registration = candidate(core, want);
         if (registration == NULL) {
@@ -499,7 +524,7 @@ void weivel_constraints_due(weivel_core *core, weivel_want *want, int64_t now) {
     if (next <= constrained->poll_index) {
         next = constrained->poll_index + 1;
     }
-    if (next > constrained->last_poll) {
+    if (constrained->bounded && next > constrained->last_poll) {
         spend_budget(core, want, now);
         return;
     }
@@ -545,12 +570,12 @@ weivel_status weivel_constraints_report(weivel_core *core, weivel_want *want, we
     if (constrained->phase == PHASE_ATTRIBUTES) {
         return answer_attributes(core, want, current, capacity, now);
     }
-    constrained->request = 0;
-    bool serves = capacity->serves == WEIVEL_CHOICE_YES;
     uint32_t phase = constrained->phase;
-    if (serves) {
-        serve(core, want, current, phase != PHASE_SERVE);
-    } else if (phase == PHASE_SERVE) {
+    if (capacity->serves == WEIVEL_CHOICE_YES) {
+        return serve(core, want, current, phase != PHASE_SERVE);
+    }
+    constrained->request = 0;
+    if (phase == PHASE_SERVE) {
         poll_failed(core, want, now);
     } else if (phase == PHASE_DEGRADE_CONSTRAINED) {
         ask(core, want, current, PHASE_DEGRADE_UNCONSTRAINED, add_saturated(now, constrained->poll));

@@ -626,31 +626,189 @@ static void a_constraint_no_vocabulary_names_is_never_met(void) {
     weivel_core_destroy(core);
 }
 
-/** Options of the shape before the budget fields poll every second for thirty seconds. */
-static void options_without_a_budget_take_the_default(void) {
+/**
+ * A constrained want with no poll interval is malformed: the core mints no interval, and options of an earlier shape
+ * give none.
+ */
+static void a_constrained_want_without_a_poll_interval_is_malformed(void) {
     weivel_core *core = core_with_vocabulary();
     numbers_spec constraints = {{"minReplicas"}, {3}};
     weivel_handle consumer = open_consumer(core, &constraints, false, NULL);
     forget(core);
     weivel_want_options options = WEIVEL_INIT(weivel_want_options);
-    options.size = (uint32_t)(offsetof(weivel_want_options, timeout_millis) + sizeof(int64_t));
-    options.now = 500;
     options.budgeted = WEIVEL_CHOICE_YES;
-    options.budget_millis = 1;
-    options.poll_millis = 1;
-    weivel_handle want = 0;
-    CHECK(weivel_want_service(core, consumer, SERVICE, &options, &want, NULL) == WEIVEL_STATUS_OK);
-    int64_t deadline = 0;
-    CHECK(weivel_next_deadline(core, &deadline, NULL) == WEIVEL_STATUS_OK && deadline == 1500);
-    advance_to(core, 30499);
-    CHECK(settlement_of(want) == NULL);
-    advance_to(core, 30500);
-    const seen *settled = settlement_of(want);
-    CHECK(settled != NULL && settled->code == WEIVEL_REFUSAL_UNMET_CONSTRAINT);
-    if (settled != NULL) {
-        mentions(settled->detail, "after 30000 ms");
-    }
+    options.budget_millis = 2000;
+    weivel_handle want = 7;
+    CHECK(weivel_want_service(core, consumer, SERVICE, &options, &want, NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(want == 0);
+    CHECK(weivel_want_service(core, consumer, SERVICE, NULL, &want, NULL) == WEIVEL_STATUS_MALFORMED);
+    weivel_want_options earlier = WEIVEL_INIT(weivel_want_options);
+    earlier.size = (uint32_t)(offsetof(weivel_want_options, timeout_millis) + sizeof(int64_t));
+    earlier.poll_millis = 1000;
+    CHECK(weivel_want_service(core, consumer, SERVICE, &earlier, &want, NULL) == WEIVEL_STATUS_MALFORMED);
+    drain(core);
+    CHECK(count_kind(WEIVEL_EVENT_REFUSAL) == 3);
+    const seen *refused = nth_of(WEIVEL_EVENT_REFUSAL, 0);
+    CHECK(refused->code == WEIVEL_REFUSAL_MALFORMED_CALL);
+    check_text(refused->detail,
+               "weivel_want_service asked for service \"storage.object\", which the manifest constrains, without a "
+               "poll interval",
+               "unpolled detail");
+    check_text(refused->fix,
+               "give weivel_want_options a poll_millis of 1 or more; a budget is optional, and without one the want "
+               "polls until a provider meets its constraints",
+               "unpolled fix");
+    CHECK(count_kind(WEIVEL_EVENT_WANT_SETTLED) == 0);
+    int64_t left;
+    CHECK(weivel_next_deadline(core, &left, NULL) == WEIVEL_STATUS_NONE);
+    weivel_census census;
+    weivel_core_census(core, &census);
+    CHECK(census.slots == 0);
     weivel_core_destroy(core);
+}
+
+static weivel_handle want_unbudgeted(weivel_core *core, weivel_handle plugin, int64_t poll) {
+    weivel_want_options options = WEIVEL_INIT(weivel_want_options);
+    options.poll_millis = poll;
+    weivel_handle want = 0;
+    CHECK(weivel_want_service(core, plugin, SERVICE, &options, &want, NULL) == WEIVEL_STATUS_OK);
+    CHECK(want != 0);
+    return want;
+}
+
+/**
+ * Without a budget a constrained want polls for as long as it takes (invariant 8): never refused for time, never
+ * degraded, and served the moment a provider meets its constraints.
+ */
+static void a_want_without_a_budget_polls_until_it_is_served(void) {
+    enum { POLLS = 120 };
+    weivel_core *core = core_with_vocabulary();
+    numbers_spec advertised = {{"maxReplicas"}, {1}};
+    numbers_spec constraints = {{"minReplicas"}, {3}};
+    weivel_handle provider = open_provider(core, "the-provider", &advertised);
+    weivel_handle consumer = open_consumer(core, &constraints, true, NULL);
+    weivel_handle registration = register_service(core, provider, SERVICE);
+    forget(core);
+    weivel_handle want = want_unbudgeted(core, consumer, 1000);
+    drain(core);
+    uint32_t answered = 0;
+    for (int64_t poll = 1; poll <= POLLS; poll++) {
+        answered += report_attributes(core, latest_question(), &one_replica, (poll - 1) * 1000) == WEIVEL_STATUS_OK;
+        advance_to(core, poll * 1000);
+    }
+    CHECK(answered == POLLS);
+    CHECK(settlement_of(want) == NULL);
+    CHECK(questions_of(WEIVEL_CAPACITY_SERVE) == 0);
+    CHECK(questions_of(WEIVEL_CAPACITY_ATTRIBUTES) == POLLS + 1);
+    advance_to(core, INT64_C(1000000000));
+    CHECK(settlement_of(want) == NULL);
+    int64_t deadline = 0;
+    CHECK(weivel_next_deadline(core, &deadline, NULL) == WEIVEL_STATUS_OK && deadline == INT64_C(1000001000));
+    CHECK(report_attributes(core, latest_question(), &three_replicas, INT64_C(1000000000)) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(report_serves(core, latest_question(), true, INT64_C(1000000000)) == WEIVEL_STATUS_OK);
+    drain(core);
+    const seen *settled = settlement_of(want);
+    CHECK(settled != NULL && settled->implementation == registration && settled->degraded == 0);
+    CHECK(count_kind(WEIVEL_EVENT_LOG) == 0);
+    weivel_core_destroy(core);
+}
+
+/** Without a budget, a want whose service nothing provides is never refused: it waits for a provider to arrive. */
+static void a_want_without_a_budget_outwaits_an_absent_provider(void) {
+    weivel_core *core = core_with_vocabulary();
+    numbers_spec advertised = {{"maxReplicas"}, {3}};
+    numbers_spec constraints = {{"minReplicas"}, {3}};
+    weivel_handle consumer = open_consumer(core, &constraints, false, NULL);
+    weivel_handle provider = open_provider(core, "the-provider", &advertised);
+    forget(core);
+    weivel_handle want = want_unbudgeted(core, consumer, 1000);
+    advance_to(core, INT64_C(3600000));
+    advance_to(core, INT64_C(86400000));
+    CHECK(settlement_of(want) == NULL);
+    register_service(core, provider, SERVICE);
+    advance_to(core, INT64_C(86401000));
+    numbers_spec nothing_live = {{NULL}, {0}};
+    CHECK(report_attributes(core, latest_question(), &nothing_live, INT64_C(86401000)) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(report_serves(core, latest_question(), true, INT64_C(86401000)) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(settlement_of(want) != NULL && settlement_of(want)->implementation != 0);
+    weivel_core_destroy(core);
+}
+
+static uint32_t degraded_reports(void) {
+    uint32_t count = 0;
+    for (uint32_t at = 0; at < the_journal.count; at++) {
+        const seen *item = &the_journal.items[at];
+        count += item->kind == WEIVEL_EVENT_LOG && strstr(item->detail, "accepted a degraded") != NULL;
+    }
+    return count;
+}
+
+/** Drives a degradable scene to its spent budget, where the provider is asked under its constraints once more. */
+static seen degrade_question(scene *made) {
+    advance_to(made->core, 1000);
+    advance_to(made->core, 2000);
+    advance_to(made->core, 3000);
+    seen asked = *latest_question();
+    CHECK(asked.question == WEIVEL_CAPACITY_SERVE && asked.constraint_count == 1);
+    forget(made->core);
+    return asked;
+}
+
+/** A yes whose holding cannot be recorded changes nothing and leaves the question open: never settled unreported. */
+static void a_yes_that_cannot_be_held_leaves_the_question_open(void) {
+    scene made = scene_of(true, 1);
+    seen asked = degrade_question(&made);
+    made.core->registry->fail_next_holding = true;
+    CHECK(report_serves(made.core, &asked, true, 3000) == WEIVEL_STATUS_OUT_OF_MEMORY);
+    drain(made.core);
+    CHECK(settlement_of(made.want) == NULL);
+    CHECK(degraded_reports() == 0);
+    CHECK(count_kind(WEIVEL_EVENT_LOG) == 1 && nth_of(WEIVEL_EVENT_LOG, 0)->level == WEIVEL_LOG_ERROR);
+    CHECK(questions_of(WEIVEL_CAPACITY_SERVE) == 0);
+    CHECK(report_serves(made.core, &asked, true, 3000) == WEIVEL_STATUS_OK);
+    drain(made.core);
+    const seen *settled = settlement_of(made.want);
+    CHECK(settled != NULL && settled->degraded == 1 && settled->implementation == made.registration);
+    CHECK(degraded_reports() == 1);
+    weivel_core_destroy(made.core);
+}
+
+/** Two holdings in a row that cannot be recorded still lose no yes: the third answer settles, reported once. */
+static void two_failed_holdings_lose_no_yes(void) {
+    scene made = scene_of(true, 1);
+    seen asked = degrade_question(&made);
+    made.core->registry->fail_next_holding = true;
+    CHECK(report_serves(made.core, &asked, true, 3000) == WEIVEL_STATUS_OUT_OF_MEMORY);
+    made.core->registry->fail_next_holding = true;
+    CHECK(report_serves(made.core, &asked, true, 3001) == WEIVEL_STATUS_OUT_OF_MEMORY);
+    drain(made.core);
+    CHECK(settlement_of(made.want) == NULL && degraded_reports() == 0);
+    CHECK(report_serves(made.core, &asked, true, 3002) == WEIVEL_STATUS_OK);
+    drain(made.core);
+    const seen *settled = settlement_of(made.want);
+    CHECK(settled != NULL && settled->degraded == 1);
+    CHECK(degraded_reports() == 1);
+    weivel_core_destroy(made.core);
+}
+
+/** A poll's yes that cannot be held likewise waits to be answered again, and settles undegraded. */
+static void a_poll_yes_that_cannot_be_held_leaves_the_question_open(void) {
+    scene made = scene_of(false, 1);
+    CHECK(report_attributes(made.core, latest_question(), &three_replicas, 0) == WEIVEL_STATUS_OK);
+    drain(made.core);
+    seen asked = *latest_question();
+    made.core->registry->fail_next_holding = true;
+    CHECK(report_serves(made.core, &asked, true, 0) == WEIVEL_STATUS_OUT_OF_MEMORY);
+    drain(made.core);
+    CHECK(settlement_of(made.want) == NULL);
+    CHECK(report_serves(made.core, &asked, true, 0) == WEIVEL_STATUS_OK);
+    drain(made.core);
+    const seen *settled = settlement_of(made.want);
+    CHECK(settled != NULL && settled->degraded == 0 && settled->implementation == made.registration);
+    weivel_core_destroy(made.core);
 }
 
 /** A budget that would never be spent is a malformed call. */
@@ -994,7 +1152,12 @@ int main(void) {
     the_last_poll_refused_still_asks_once_more_before_falling_back();
     an_upper_bound_is_met_only_at_or_below_its_value();
     a_constraint_no_vocabulary_names_is_never_met();
-    options_without_a_budget_take_the_default();
+    a_constrained_want_without_a_poll_interval_is_malformed();
+    a_want_without_a_budget_polls_until_it_is_served();
+    a_want_without_a_budget_outwaits_an_absent_provider();
+    a_yes_that_cannot_be_held_leaves_the_question_open();
+    two_failed_holdings_lose_no_yes();
+    a_poll_yes_that_cannot_be_held_leaves_the_question_open();
     a_budget_that_is_never_spent_is_malformed();
     a_late_advance_skips_the_polls_that_passed();
     a_provider_that_goes_mid_poll_is_absent_from_then_on();
