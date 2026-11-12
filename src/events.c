@@ -170,6 +170,15 @@ weivel_status weivel_events_push_revoked(weivel_events *events, const weivel_rev
     return weivel_events_push(events, &event);
 }
 
+_Static_assert(sizeof(weivel_capability_event) <= WEIVEL_EVENT_PAYLOAD_WORDS * sizeof(uint64_t),
+               "a capability event must fit the event's payload union");
+
+weivel_status weivel_events_push_capability(weivel_events *events, const weivel_capability_event *heard) {
+    weivel_event event = empty_event(WEIVEL_EVENT_CAPABILITY);
+    event.data.capability = *heard;
+    return weivel_events_push(events, &event);
+}
+
 /** Copies core-owned numbers, at today's size, into one allocation an event will own; NULL when memory runs out. */
 static weivel_number *copy_numbers(const weivel_numbers *numbers) {
     size_t bytes = (size_t)numbers->count * sizeof(weivel_number);

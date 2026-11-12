@@ -35,6 +35,10 @@ weivel_plugins *weivel_plugins_create(void) {
 static void free_plugin(weivel_plugin *plugin) {
     weivel_table_destroy(plugin->declared);
     weivel_table_destroy(plugin->reported_services);
+    weivel_table_destroy(plugin->capabilities_reachable);
+    weivel_table_destroy(plugin->capabilities_declared);
+    weivel_table_destroy(plugin->provided);
+    weivel_table_destroy(plugin->reported_capabilities);
     for (uint32_t index = 0; index < plugin->reported_count; index++) {
         free(plugin->reported[index].id);
     }
@@ -116,9 +120,16 @@ static weivel_plugin *new_plugin(void) {
     weivel_list_init(&plugin->wants);
     weivel_list_init(&plugin->watches);
     weivel_list_init(&plugin->holdings);
+    weivel_list_init(&plugin->provisions);
+    weivel_list_init(&plugin->capability_watches);
     plugin->declared = weivel_table_create();
     plugin->reported_services = weivel_table_create();
-    if (plugin->declared == NULL || plugin->reported_services == NULL) {
+    plugin->capabilities_reachable = weivel_table_create();
+    plugin->capabilities_declared = weivel_table_create();
+    plugin->provided = weivel_table_create();
+    plugin->reported_capabilities = weivel_table_create();
+    if (plugin->declared == NULL || plugin->reported_services == NULL || plugin->capabilities_reachable == NULL ||
+        plugin->capabilities_declared == NULL || plugin->provided == NULL || plugin->reported_capabilities == NULL) {
         free_plugin(plugin);
         return NULL;
     }
@@ -160,6 +171,26 @@ static weivel_status declare_services(weivel_plugin *plugin) {
     return status;
 }
 
+static weivel_status index_ids(weivel_table *table, const weivel_strings *ids) {
+    weivel_status status = WEIVEL_STATUS_OK;
+    for (uint32_t index = 0; status == WEIVEL_STATUS_OK && index < ids->count; index++) {
+        status = weivel_table_add_text(table, ids->items[index], (void *)ids->items[index]);
+    }
+    return status;
+}
+
+static weivel_status declare_capabilities(weivel_plugin *plugin) {
+    const weivel_capability_declarations *capabilities = &plugin->manifest.value.capabilities;
+    weivel_status status = index_ids(plugin->capabilities_declared, &capabilities->provides);
+    if (status == WEIVEL_STATUS_OK) {
+        status = index_ids(plugin->capabilities_reachable, &capabilities->consumes);
+    }
+    if (status == WEIVEL_STATUS_OK) {
+        status = index_ids(plugin->capabilities_reachable, &capabilities->provides);
+    }
+    return status;
+}
+
 static weivel_status refuse_taken_name(weivel_core *core, const char *import_name) {
     char detail[384];
     snprintf(detail, sizeof detail, "a plugin named \"%s\" is already registered", import_name);
@@ -183,6 +214,9 @@ static weivel_status refuse_manifest(weivel_core *core, const weivel_manifest_pr
 
 static weivel_status keep_plugin(weivel_core *core, weivel_plugin *plugin) {
     weivel_status status = declare_services(plugin);
+    if (status == WEIVEL_STATUS_OK) {
+        status = declare_capabilities(plugin);
+    }
     if (status != WEIVEL_STATUS_OK) {
         return status;
     }
@@ -351,11 +385,20 @@ weivel_status weivel_plugin_payload(weivel_core *core, weivel_handle plugin, uin
     return status;
 }
 
+/**
+ * @implNote Capabilities go first, so a plugin watching what it provides hears its own implementations withdrawn
+ * before its watches stop.
+ */
+static void strip_plugin(weivel_core *core, weivel_plugin *plugin) {
+    weivel_capabilities_strip(core, plugin);
+    weivel_registry_strip(core, plugin);
+}
+
 static void release_plugin(weivel_core *core, weivel_plugin *plugin) {
     if (plugin->state == WEIVEL_PLUGIN_RELEASED) {
         return;
     }
-    weivel_registry_strip(core, plugin);
+    strip_plugin(core, plugin);
     forget_identity(core, plugin);
     weivel_table_remove_text(core->plugins->names, plugin->manifest.value.import_name);
     plugin->state = WEIVEL_PLUGIN_RELEASED;
@@ -365,7 +408,7 @@ static weivel_status quarantine_plugin(weivel_core *core, weivel_plugin *plugin)
     if (plugin->state == WEIVEL_PLUGIN_RELEASED) {
         return refuse_released(core, plugin);
     }
-    weivel_registry_strip(core, plugin);
+    strip_plugin(core, plugin);
     plugin->state = WEIVEL_PLUGIN_QUARANTINED;
     return WEIVEL_STATUS_OK;
 }
@@ -399,7 +442,7 @@ static weivel_status forget_plugin(weivel_core *core, weivel_plugin *plugin) {
     if (plugin->state != WEIVEL_PLUGIN_RELEASED) {
         return refuse_state(core, plugin, "is not released", "release it before forgetting it");
     }
-    weivel_registry_strip(core, plugin);
+    strip_plugin(core, plugin);
     weivel_handles_release(core->handles, plugin->handle, WEIVEL_RECORD_PLUGIN);
     remove_plugin(core->plugins, plugin);
     free_plugin(plugin);

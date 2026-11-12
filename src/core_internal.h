@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <weivel/core.h>
 
+#include "capabilities.h"
 #include "compatibility.h"
 #include "constraints.h"
 #include "deadlines.h"
@@ -21,6 +22,7 @@ struct weivel_core {
     weivel_deadlines *deadlines;
     weivel_plugins *plugins;
     weivel_registry *registry;
+    weivel_capabilities *capabilities;
     weivel_core_options options;
     /** The applications and api the options gave, the applications copied into `host_storage`. */
     weivel_host host;
@@ -37,7 +39,9 @@ typedef enum weivel_record_kind {
     WEIVEL_RECORD_PLUGIN = 1,
     WEIVEL_RECORD_REGISTRATION = 2,
     WEIVEL_RECORD_WANT = 3,
-    WEIVEL_RECORD_WATCH = 4
+    WEIVEL_RECORD_WATCH = 4,
+    WEIVEL_RECORD_PROVISION = 5,
+    WEIVEL_RECORD_CAPABILITY_WATCH = 6
 } weivel_record_kind;
 
 /** The smallest `size` each public struct accepts: its shape when first published, fixed forever. */
@@ -49,6 +53,7 @@ typedef enum weivel_record_kind {
 #define WEIVEL_WANT_OPTIONS_FIRST_SIZE (offsetof(weivel_want_options, timeout_millis) + sizeof(int64_t))
 #define WEIVEL_CAPACITY_FIRST_SIZE (offsetof(weivel_capacity, serves) + sizeof(uint32_t))
 #define WEIVEL_SERVICE_LIST_FIRST_SIZE (offsetof(weivel_service_list, storage) + sizeof(void *))
+#define WEIVEL_CAPABILITY_LIST_FIRST_SIZE (offsetof(weivel_capability_list, storage) + sizeof(void *))
 
 /** Queues a log event when `level` reaches the core's minimum. Called with the core's mutex held. */
 void weivel_core_log(weivel_core *core, uint32_t level, const char *text);
@@ -79,6 +84,9 @@ typedef struct weivel_census {
     uint32_t live_handles;
     uint32_t handle_slots;
     uint32_t deadlines;
+    uint32_t capabilities;
+    uint32_t provisions;
+    uint32_t capability_watches;
 } weivel_census;
 
 /** Counts a core's records. Takes the core's mutex. */

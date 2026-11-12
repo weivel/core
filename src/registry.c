@@ -405,7 +405,7 @@ static weivel_status end_handle(weivel_core *core, weivel_handle handle) {
         stop_watch(core, record);
     } else if (weivel_handles_resolve(core->handles, handle, WEIVEL_RECORD_WANT, &record) == WEIVEL_STATUS_OK) {
         weivel_waiting_withdraw(core, record);
-    } else {
+    } else if (!weivel_capabilities_end_watch(core, handle)) {
         return refuse_stale(core, handle);
     }
     return WEIVEL_STATUS_OK;

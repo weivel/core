@@ -14,6 +14,7 @@ typedef struct seen {
     weivel_handle subject;
     weivel_handle plugin;
     weivel_handle implementation;
+    weivel_handle provider;
     uint32_t code;
     uint32_t change;
     uint32_t level;
@@ -79,6 +80,13 @@ static inline void note(seen *item, const weivel_event *event) {
         item->plugin = event->data.watch.plugin;
         item->implementation = event->data.watch.implementation;
         item->change = event->data.watch.change;
+        break;
+    case WEIVEL_EVENT_CAPABILITY:
+        item->subject = event->data.capability.watch;
+        item->plugin = event->data.capability.plugin;
+        item->implementation = event->data.capability.implementation;
+        item->provider = event->data.capability.provider;
+        item->change = event->data.capability.change;
         break;
     case WEIVEL_EVENT_REVOKED:
         item->plugin = event->data.revoked.plugin;

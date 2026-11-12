@@ -118,7 +118,14 @@ typedef enum weivel_refusal_code {
      */
     WEIVEL_REFUSAL_UNMET_CONSTRAINT = 16,
     /** A degradable want's provider would serve neither its constraints nor an unconstrained ask. */
-    WEIVEL_REFUSAL_NOT_SERVED = 17
+    WEIVEL_REFUSAL_NOT_SERVED = 17,
+    /**
+     * A plugin's activation provided fewer capabilities than its manifest declares, or more; detail names each one
+     * missing or extra, and fix the first of them.
+     */
+    WEIVEL_REFUSAL_ACTIVATION_MISMATCH = 18,
+    /** A plugin provided a capability it had already provided. */
+    WEIVEL_REFUSAL_PROVIDED_TWICE = 19
 } weivel_refusal_code;
 
 /**
@@ -166,7 +173,9 @@ typedef enum weivel_event_kind {
      * A constrained want asks a provider's object a question, answered by weivel_report_capacity; the payload is
      * `data.capacity`.
      */
-    WEIVEL_EVENT_CAPACITY_WANTED = 7
+    WEIVEL_EVENT_CAPACITY_WANTED = 7,
+    /** A watched capability gained or lost a verified implementation; the payload is `data.capability`. */
+    WEIVEL_EVENT_CAPABILITY = 8
 } weivel_event_kind;
 
 /**
@@ -269,6 +278,27 @@ typedef struct weivel_capacity_event {
     weivel_numbers constraints;
 } weivel_capacity_event;
 
+/** What a capability watch heard. */
+typedef enum weivel_capability_change {
+    /** An implementation joined: its plugin's activation was verified. */
+    WEIVEL_CAPABILITY_PROVIDED = 1,
+    /** An implementation left: its plugin was quarantined or released. */
+    WEIVEL_CAPABILITY_WITHDRAWN = 2
+} weivel_capability_change;
+
+/**
+ * One change a capability watch heard: `plugin` watches, `implementation` is the handle weivel_provide_capability
+ * answered `provider`, and `change` is a weivel_capability_change. A withdrawal names the very implementation that
+ * left, so a consumer drops exactly that one.
+ */
+typedef struct weivel_capability_event {
+    weivel_handle watch;
+    weivel_handle plugin;
+    weivel_handle implementation;
+    weivel_handle provider;
+    uint32_t change;
+} weivel_capability_event;
+
 /**
  * How many 64-bit words an event's payload union spans. Part of the event's first published shape, so it never
  * shrinks; a payload that outgrows it enlarges the union and so `sizeof(weivel_event)`, which the size convention
@@ -294,6 +324,7 @@ typedef struct weivel_event {
         weivel_revoked_event revoked;
         weivel_reach_refusal reach;
         weivel_capacity_event capacity;
+        weivel_capability_event capability;
         uint64_t reserved[WEIVEL_EVENT_PAYLOAD_WORDS];
     } data;
 } weivel_event;
@@ -734,7 +765,9 @@ WEIVEL_API weivel_status weivel_plugin_payload(weivel_core *core, weivel_handle 
                                                uint32_t *pending_events);
 
 /**
- * Releases a plugin, in one call: its watches stop, everything it registered is unregistered (each holder told by a
+ * Releases a plugin, in one call: every capability implementation it provided is withdrawn, which each watch of
+ * that capability hears as WEIVEL_CAPABILITY_WITHDRAWN when the implementation was verified, its own watches
+ * included; then its watches stop, everything it registered is unregistered (each holder told by a
  * WEIVEL_EVENT_REVOKED and each watch by a WEIVEL_EVENT_WATCH), every want it still waits on is rejected with
  * WEIVEL_REFUSAL_STOPPED, and every service it holds is revoked to it. Its import name and identity are free again
  * at once, so a plugin of the same name may be registered.
@@ -798,8 +831,8 @@ WEIVEL_API weivel_status weivel_register_service(weivel_core *core, weivel_handl
                                                  weivel_handle *registration, uint32_t *pending_events);
 
 /**
- * Ends what a handle stands for: a registration is unregistered, a watch stops, and a want still waiting is
- * withdrawn without settling.
+ * Ends what a handle stands for: a registration is unregistered, a watch of a service or of a capability stops, and
+ * a want still waiting is withdrawn without settling.
  *
  * Unregistering revokes the service from everyone who holds it, each by a WEIVEL_EVENT_REVOKED. A plugin holds a
  * registration from the moment the core hands it that registration's handle, by a `get`, a settled `want` or a
@@ -1005,6 +1038,102 @@ WEIVEL_API weivel_status weivel_unbound_services(weivel_core *core, weivel_handl
  * Threading: any thread; needs no core.
  */
 WEIVEL_API weivel_status weivel_service_list_release(weivel_service_list *list);
+
+/**
+ * Provides a capability: the implementation handle answered here stands for the plugin's object, which the caller
+ * keeps. It reaches no consumer yet: it joins the answers for `id` only once weivel_verify_activation passes the
+ * plugin, so a consumer is never handed an implementation the host may still refuse. Providing is not checked
+ * against the manifest here; weivel_verify_activation checks it.
+ *
+ * @param id the capability id, copied. Required, non-empty.
+ * @param implementation receives the implementation handle. Required; 0 on every answer but OK.
+ * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for a stale plugin or one never opened, for an id this plugin
+ * already provides (WEIVEL_REFUSAL_PROVIDED_TWICE), each queuing a refusal, or for a plugin no longer running,
+ * queuing a log only; WEIVEL_STATUS_MALFORMED for a NULL core, id or implementation or an empty id;
+ * WEIVEL_STATUS_OUT_OF_MEMORY.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_provide_capability(weivel_core *core, weivel_handle plugin, const char *id,
+                                                   weivel_handle *implementation, uint32_t *pending_events);
+
+/**
+ * Checks a plugin's activation: every capability its manifest provides must have been provided, and nothing else.
+ * When it passes, each implementation the plugin provided joins the answers for its capability, after every one
+ * verified before it, and each watch of that capability hears WEIVEL_CAPABILITY_PROVIDED. Verifying it again
+ * admits nothing new, since anything it provided since is undeclared and so refused.
+ *
+ * When it does not pass, nothing joins, and the caller quarantines the plugin.
+ *
+ * @return WEIVEL_STATUS_OK when it passes; WEIVEL_STATUS_REFUSED when the plugin provided less or more than it
+ * declares (WEIVEL_REFUSAL_ACTIVATION_MISMATCH), for a stale plugin, or for one not open
+ * (WEIVEL_REFUSAL_PLUGIN_STATE), each queuing a refusal; WEIVEL_STATUS_MALFORMED for a NULL core;
+ * WEIVEL_STATUS_OUT_OF_MEMORY.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_verify_activation(weivel_core *core, weivel_handle plugin,
+                                                  uint32_t *pending_events);
+
+/** One implementation of a capability: the handle its provider was answered, and the providing plugin. */
+typedef struct weivel_capability_implementation {
+    uint32_t size;
+    weivel_handle implementation;
+    weivel_handle provider;
+} weivel_capability_implementation;
+
+/**
+ * The implementations of a capability, filled into a struct the caller owns. `items` holds `count` size-prefixed
+ * elements, read as weivel_numbers is, in `storage`, private to the core, until weivel_capability_list_release.
+ */
+typedef struct weivel_capability_list {
+    uint32_t size;
+    const weivel_capability_implementation *items;
+    uint32_t count;
+    void *storage;
+} weivel_capability_list;
+
+/**
+ * Answers every verified implementation of `id`, in the order their plugins' activations were verified, which is
+ * not the order they were provided.
+ *
+ * Reach is checked first: the plugin must list `id` among the capabilities it consumes or provides, else it is
+ * answered an empty list and refused (WEIVEL_REFUSAL_UNDECLARED), reported as a WEIVEL_EVENT_REACH_REFUSED of kind
+ * WEIVEL_REACH_CAPABILITY once per plugin and id. Then a plugin no longer running is let through.
+ *
+ * @param list the caller's struct with `size` set and nothing held; on WEIVEL_STATUS_OK it must be passed to
+ * weivel_capability_list_release.
+ * @return WEIVEL_STATUS_OK, also with no implementation; WEIVEL_STATUS_REFUSED for an undeclared id, a stale plugin
+ * or one never opened, the list left empty; WEIVEL_STATUS_MALFORMED for a NULL core, id or list, an empty id, or a
+ * list below its first shape or still holding one; WEIVEL_STATUS_OUT_OF_MEMORY.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_capability_all(weivel_core *core, weivel_handle plugin, const char *id,
+                                               weivel_capability_list *list, uint32_t *pending_events);
+
+/**
+ * Frees what a capability list carries and leaves it empty.
+ *
+ * @return WEIVEL_STATUS_OK, also as a no-op for an empty list or an all-zero one (size 0); WEIVEL_STATUS_MALFORMED
+ * for NULL or a size between 1 and the list's first shape.
+ * Threading: any thread; needs no core.
+ */
+WEIVEL_API weivel_status weivel_capability_list_release(weivel_capability_list *list);
+
+/**
+ * Watches `id`: each later change to its verified implementations is a WEIVEL_EVENT_CAPABILITY, and nothing from
+ * before the watch is replayed. The watch lasts until weivel_unregister, or until the plugin is released or
+ * quarantined, which first withdraws what the plugin itself provided, so a plugin watching its own capability hears
+ * its own implementation leave.
+ *
+ * Reach is checked as weivel_capability_all checks it, and a refused watch is inert. A late watch, from a plugin no
+ * longer running, is inert and logged only, never reported.
+ *
+ * @param watch receives the watch handle. Required; 0 on every answer but OK.
+ * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for an undeclared id, a late watch, a stale plugin or one never
+ * opened; WEIVEL_STATUS_MALFORMED for a NULL core, id or watch or an empty id; WEIVEL_STATUS_OUT_OF_MEMORY.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_watch_capability(weivel_core *core, weivel_handle plugin, const char *id,
+                                                 weivel_handle *watch, uint32_t *pending_events);
 
 #ifdef __cplusplus
 }

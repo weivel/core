@@ -42,6 +42,7 @@ static weivel_core_options resolve_options(const weivel_core_options *options) {
 }
 
 static void free_core(weivel_core *core) {
+    weivel_capabilities_destroy(core->capabilities);
     weivel_registry_destroy(core->registry);
     weivel_vocabulary_free(&core->vocabulary);
     weivel_plugins_destroy(core->plugins);
@@ -66,6 +67,7 @@ static weivel_core *allocate_core(const weivel_core_options *options) {
     core->deadlines = weivel_deadlines_create();
     core->plugins = weivel_plugins_create();
     core->registry = weivel_registry_create();
+    core->capabilities = weivel_capabilities_create();
     core->host.api = options->api;
     bool host_copied = weivel_strings_copy(&options->applications, &core->host.applications, &core->host_storage);
     core->options.applications = core->host.applications;
@@ -76,7 +78,8 @@ static weivel_core *allocate_core(const weivel_core_options *options) {
     core->options.constraint_vocabulary.items = core->vocabulary.entries;
     core->options.constraint_vocabulary.count = core->vocabulary.count;
     if (!host_copied || !well_known_copied || !vocabulary_copied || core->mutex == NULL || core->events == NULL ||
-        core->handles == NULL || core->deadlines == NULL || core->plugins == NULL || core->registry == NULL) {
+        core->handles == NULL || core->deadlines == NULL || core->plugins == NULL || core->registry == NULL ||
+        core->capabilities == NULL) {
         free_core(core);
         return NULL;
     }
@@ -173,6 +176,9 @@ void weivel_core_census(weivel_core *core, weivel_census *census) {
     census->live_handles = weivel_handles_live(core->handles);
     census->handle_slots = weivel_handles_slots(core->handles);
     census->deadlines = (uint32_t)weivel_deadlines_count(core->deadlines);
+    census->capabilities = core->capabilities->count;
+    census->provisions = core->capabilities->provision_count;
+    census->capability_watches = core->capabilities->watch_count;
     weivel_mutex_unlock(core->mutex);
 }
 

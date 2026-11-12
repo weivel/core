@@ -155,6 +155,16 @@ void weivel_reach_refuse_provider(weivel_core *core, weivel_plugin *plugin, cons
 /** Logs a late attempt (`what` is "want", "watch" or "registration") from a plugin no longer running. */
 void weivel_reach_log_late(weivel_core *core, const weivel_plugin *plugin, const char *what, const char *id);
 
+/** Logs a late attempt on a capability (`what` is "provision" or "watch") from a plugin no longer running. */
+void weivel_reach_log_late_capability(weivel_core *core, const weivel_plugin *plugin, const char *what,
+                                      const char *id);
+
+/**
+ * Whether a plugin may reach capability `id`, which it consumes or provides; when it may not, the refusal is
+ * reported once per plugin and id. Lateness is not looked at, so the declaration is always checked first.
+ */
+bool weivel_reach_capability(weivel_core *core, weivel_plugin *plugin, const char *id);
+
 /** The texts a want gets when its plugin stops while it waits, or asks after it stopped. */
 void weivel_reach_stopped(const char *id, weivel_reach *reach);
 

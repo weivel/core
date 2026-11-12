@@ -62,6 +62,17 @@ typedef struct weivel_plugin {
     weivel_link wants;
     weivel_link watches;
     weivel_link holdings;
+    /** The capability ids it may reach, consumed or provided, each mapped to itself, pointing into `manifest`. */
+    weivel_table *capabilities_reachable;
+    /** The capability ids its manifest provides, each mapped to itself, pointing into `manifest`. */
+    weivel_table *capabilities_declared;
+    /** From each capability id it provided to the provision, keyed by the capability's own id. */
+    weivel_table *provided;
+    /** The capability ids whose refusal has been reported for this plugin, keyed by the reported record's id. */
+    weivel_table *reported_capabilities;
+    /** Its provisions, in the order provided. */
+    weivel_link provisions;
+    weivel_link capability_watches;
 } weivel_plugin;
 
 /** Every plugin record one core owns; the handle table only borrows them. */
