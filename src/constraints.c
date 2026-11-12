@@ -1,4 +1,5 @@
 #include "constraints.h"
+#include "memory.h"
 
 #include <inttypes.h>
 #include <stdarg.h>
@@ -84,7 +85,7 @@ static void append(weivel_text *text, const char *format, ...) {
         while (capacity < wanted) {
             capacity *= 2;
         }
-        char *grown = realloc(text->data, capacity);
+        char *grown = weivel_memory_reallocate(text->data, capacity);
         if (grown == NULL) {
             text->failed = true;
             va_end(arguments);
@@ -158,7 +159,7 @@ static char *keep(char **cursor, const char *text) {
 
 bool weivel_vocabulary_copy(const weivel_constraint_vocabulary *source, weivel_vocabulary *copy) {
     memset(copy, 0, sizeof *copy);
-    copy->storage = malloc(vocabulary_bytes(source));
+    copy->storage = weivel_memory_allocate(vocabulary_bytes(source));
     copy->by_name = weivel_table_create();
     if (copy->storage == NULL || copy->by_name == NULL) {
         weivel_vocabulary_free(copy);
@@ -249,7 +250,7 @@ static bool overlay(const weivel_numbers *advertised, const weivel_numbers *live
         weivel_element_read(live->items, live->count, index, &number, sizeof number);
         bytes += strlen(number.name) + 1;
     }
-    weivel_number *items = malloc(bytes == 0 ? 1 : bytes);
+    weivel_number *items = weivel_memory_allocate(bytes == 0 ? 1 : bytes);
     if (items == NULL) {
         return false;
     }
@@ -472,7 +473,7 @@ static void poll_failed(weivel_core *core, weivel_want *want, int64_t now) {
 
 weivel_status weivel_constraints_start(weivel_core *core, weivel_want *want, const weivel_service_want *wanted,
                                        const weivel_want_options *options) {
-    weivel_constrained *constrained = calloc(1, sizeof *constrained);
+    weivel_constrained *constrained = weivel_memory_allocate_zeroed(1, sizeof *constrained);
     if (constrained == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }

@@ -1,4 +1,5 @@
 #include "table.h"
+#include "memory.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -30,11 +31,11 @@ static uint64_t hash_of(const void *key, size_t length) {
 }
 
 weivel_table *weivel_table_create(void) {
-    weivel_table *table = calloc(1, sizeof *table);
+    weivel_table *table = weivel_memory_allocate_zeroed(1, sizeof *table);
     if (table == NULL) {
         return NULL;
     }
-    table->buckets = calloc(FIRST_CAPACITY, sizeof *table->buckets);
+    table->buckets = weivel_memory_allocate_zeroed(FIRST_CAPACITY, sizeof *table->buckets);
     if (table->buckets == NULL) {
         free(table);
         return NULL;
@@ -81,7 +82,7 @@ static void grow(weivel_table *table) {
         return;
     }
     uint32_t capacity = table->capacity * 2;
-    table_entry **buckets = calloc(capacity, sizeof *buckets);
+    table_entry **buckets = weivel_memory_allocate_zeroed(capacity, sizeof *buckets);
     if (buckets == NULL) {
         return;
     }
@@ -110,7 +111,7 @@ weivel_status weivel_table_add(weivel_table *table, const void *key, size_t leng
         (*place)->value = value;
         return WEIVEL_STATUS_OK;
     }
-    table_entry *entry = malloc(sizeof *entry);
+    table_entry *entry = weivel_memory_allocate(sizeof *entry);
     if (entry == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }

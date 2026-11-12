@@ -1,4 +1,5 @@
 #include "events.h"
+#include "memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -13,12 +14,12 @@ struct weivel_events {
 };
 
 weivel_events *weivel_events_create(uint32_t initial_capacity) {
-    weivel_events *events = calloc(1, sizeof *events);
+    weivel_events *events = weivel_memory_allocate_zeroed(1, sizeof *events);
     if (events == NULL) {
         return NULL;
     }
     events->capacity = initial_capacity == 0 ? DEFAULT_CAPACITY : initial_capacity;
-    events->ring = calloc(events->capacity, sizeof *events->ring);
+    events->ring = weivel_memory_allocate_zeroed(events->capacity, sizeof *events->ring);
     if (events->ring == NULL) {
         free(events);
         return NULL;
@@ -47,7 +48,7 @@ static bool grow(weivel_events *events) {
         return false;
     }
     uint32_t capacity = events->capacity * 2;
-    weivel_event *ring = malloc((size_t)capacity * sizeof *ring);
+    weivel_event *ring = weivel_memory_allocate((size_t)capacity * sizeof *ring);
     if (ring == NULL) {
         return false;
     }
@@ -88,7 +89,7 @@ void *weivel_events_copy_texts(size_t count, const char *const *texts, const cha
     for (size_t index = 0; index < count; index++) {
         total += (texts[index] == NULL ? 0 : strlen(texts[index])) + 1;
     }
-    char *storage = malloc(total == 0 ? 1 : total);
+    char *storage = weivel_memory_allocate(total == 0 ? 1 : total);
     if (storage == NULL) {
         return NULL;
     }
@@ -185,7 +186,7 @@ static weivel_number *copy_numbers(const weivel_numbers *numbers) {
     for (uint32_t index = 0; index < numbers->count; index++) {
         bytes += strlen(numbers->items[index].name) + 1;
     }
-    weivel_number *items = malloc(bytes);
+    weivel_number *items = weivel_memory_allocate(bytes);
     if (items == NULL) {
         return NULL;
     }

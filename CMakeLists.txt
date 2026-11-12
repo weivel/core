@@ -54,6 +54,10 @@ add_library(weivel_core STATIC ${WEIVEL_CORE_SOURCES})
 weivel_core_target(weivel_core)
 set_target_properties(weivel_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+add_library(weivel_core_testing STATIC EXCLUDE_FROM_ALL ${WEIVEL_CORE_SOURCES} src/memory.c)
+weivel_core_target(weivel_core_testing)
+target_compile_definitions(weivel_core_testing PUBLIC WEIVEL_TESTING)
+
 add_library(weivel_core_shared SHARED ${WEIVEL_CORE_SOURCES})
 weivel_core_target(weivel_core_shared)
 target_compile_definitions(weivel_core_shared PRIVATE WEIVEL_BUILDING_SHARED INTERFACE WEIVEL_USING_SHARED)

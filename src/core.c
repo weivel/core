@@ -1,4 +1,5 @@
 #include "core_internal.h"
+#include "memory.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -56,7 +57,7 @@ static void free_core(weivel_core *core) {
 }
 
 static weivel_core *allocate_core(const weivel_core_options *options) {
-    weivel_core *core = calloc(1, sizeof *core);
+    weivel_core *core = weivel_memory_allocate_zeroed(1, sizeof *core);
     if (core == NULL) {
         return NULL;
     }
@@ -168,6 +169,8 @@ weivel_status weivel_event_release(weivel_event *event) {
     return WEIVEL_STATUS_OK;
 }
 
+#ifdef WEIVEL_TESTING
+
 void weivel_core_census(weivel_core *core, weivel_census *census) {
     weivel_mutex_lock(core->mutex);
     census->plugins = weivel_plugins_count(core->plugins);
@@ -182,6 +185,8 @@ void weivel_core_census(weivel_core *core, weivel_census *census) {
     census->capability_holdings = core->capabilities->holding_count;
     weivel_mutex_unlock(core->mutex);
 }
+
+#endif
 
 weivel_status weivel_next_deadline(weivel_core *core, int64_t *deadline, uint32_t *pending_events) {
     if (core == NULL) {

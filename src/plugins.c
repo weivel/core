@@ -1,4 +1,5 @@
 #include "plugins.h"
+#include "memory.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -21,7 +22,7 @@ struct weivel_plugins {
 };
 
 weivel_plugins *weivel_plugins_create(void) {
-    weivel_plugins *plugins = calloc(1, sizeof *plugins);
+    weivel_plugins *plugins = weivel_memory_allocate_zeroed(1, sizeof *plugins);
     if (plugins == NULL) {
         return NULL;
     }
@@ -70,7 +71,7 @@ static bool grow(weivel_plugins *plugins) {
         return false;
     }
     uint32_t capacity = plugins->capacity == 0 ? 16 : plugins->capacity * 2;
-    weivel_plugin **items = realloc(plugins->items, (size_t)capacity * sizeof *items);
+    weivel_plugin **items = weivel_memory_reallocate(plugins->items, (size_t)capacity * sizeof *items);
     if (items == NULL) {
         return false;
     }
@@ -122,7 +123,7 @@ weivel_plugin *weivel_plugins_with_identity(const weivel_plugins *plugins, const
 }
 
 static weivel_plugin *new_plugin(void) {
-    weivel_plugin *plugin = calloc(1, sizeof *plugin);
+    weivel_plugin *plugin = weivel_memory_allocate_zeroed(1, sizeof *plugin);
     if (plugin == NULL) {
         return NULL;
     }
@@ -167,7 +168,7 @@ static weivel_status declare(weivel_plugin *plugin, const char *id, const weivel
 static weivel_status declare_services(weivel_plugin *plugin) {
     const weivel_service_declarations *services = &plugin->manifest.value.services;
     size_t total = (size_t)services->consumes.count + services->provides.count;
-    plugin->declarations = calloc(total == 0 ? 1 : total, sizeof *plugin->declarations);
+    plugin->declarations = weivel_memory_allocate_zeroed(total == 0 ? 1 : total, sizeof *plugin->declarations);
     if (plugin->declarations == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }

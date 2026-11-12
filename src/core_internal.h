@@ -79,6 +79,8 @@ weivel_status weivel_core_plugin(weivel_core *core, weivel_handle handle, weivel
  */
 weivel_status weivel_core_opened_plugin(weivel_core *core, weivel_handle handle, weivel_plugin **plugin);
 
+#ifdef WEIVEL_TESTING
+
 /** How many records a core holds now, so a test can show churn leaves nothing behind. */
 typedef struct weivel_census {
     uint32_t plugins;
@@ -95,5 +97,7 @@ typedef struct weivel_census {
 
 /** Counts a core's records. Takes the core's mutex. */
 void weivel_core_census(weivel_core *core, weivel_census *census);
+
+#endif
 
 #endif

@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "constraints.h"
+#include "memory.h"
 #include "core_internal.h"
 #include "registry.h"
 #include "sized.h"
@@ -101,7 +102,7 @@ void weivel_waiting_due(weivel_core *core, weivel_handle subject, int64_t now) {
 }
 
 static weivel_want *new_want(weivel_core *core, weivel_plugin *plugin, weivel_slot *slot) {
-    weivel_want *want = calloc(1, sizeof *want);
+    weivel_want *want = weivel_memory_allocate_zeroed(1, sizeof *want);
     if (want == NULL) {
         return NULL;
     }

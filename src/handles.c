@@ -1,4 +1,5 @@
 #include "handles.h"
+#include "memory.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -34,7 +35,7 @@ static weivel_handle handle_for(uint32_t slot, uint32_t generation) {
 }
 
 weivel_handles *weivel_handles_create(void) {
-    weivel_handles *handles = calloc(1, sizeof *handles);
+    weivel_handles *handles = weivel_memory_allocate_zeroed(1, sizeof *handles);
     if (handles != NULL) {
         handles->first_free = NO_FREE_SLOT;
     }
@@ -57,7 +58,7 @@ static bool grow(weivel_handles *handles) {
         return false;
     }
     uint32_t capacity = handles->capacity == 0 ? 16 : handles->capacity * 2;
-    handle_slot *slots = realloc(handles->slots, (size_t)capacity * sizeof *slots);
+    handle_slot *slots = weivel_memory_reallocate(handles->slots, (size_t)capacity * sizeof *slots);
     if (slots == NULL) {
         return false;
     }

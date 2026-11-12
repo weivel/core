@@ -1,4 +1,5 @@
 #include "compatibility.h"
+#include "memory.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -9,7 +10,7 @@
 
 static char *with_texts(const char *format, const char *first, const char *second) {
     int length = snprintf(NULL, 0, format, first, second);
-    char *text = length < 0 ? NULL : malloc((size_t)length + 1);
+    char *text = length < 0 ? NULL : weivel_memory_allocate((size_t)length + 1);
     if (text != NULL) {
         snprintf(text, (size_t)length + 1, format, first, second);
     }
@@ -22,7 +23,7 @@ static char *joined(const weivel_strings *strings) {
     for (uint32_t index = 0; index < strings->count; index++) {
         length += strlen(strings->items[index]) + (index > 0 ? strlen(separator) : 0);
     }
-    char *text = malloc(length);
+    char *text = weivel_memory_allocate(length);
     if (text == NULL) {
         return NULL;
     }

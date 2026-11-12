@@ -1,4 +1,5 @@
 #include "ledger.h"
+#include "memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +21,7 @@ static bool grow_ids(weivel_ids *ids) {
         return false;
     }
     uint32_t capacity = ids->capacity == 0 ? 4 : ids->capacity * 2;
-    char **items = realloc((void *)ids->items, (size_t)capacity * sizeof *items);
+    char **items = weivel_memory_reallocate((void *)ids->items, (size_t)capacity * sizeof *items);
     if (items == NULL) {
         return false;
     }
@@ -40,7 +41,7 @@ static weivel_status add_id(weivel_ids *ids, const char *id) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
     size_t length = strlen(id) + 1;
-    char *copy = malloc(length);
+    char *copy = weivel_memory_allocate(length);
     if (copy == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -65,7 +66,7 @@ bool weivel_kept_refusal_held(const weivel_kept_refusal *refusal) {
 
 static char *copy_text(const char *text) {
     size_t length = strlen(text) + 1;
-    char *copy = malloc(length);
+    char *copy = weivel_memory_allocate(length);
     if (copy != NULL) {
         memcpy(copy, text, length);
     }
@@ -227,7 +228,7 @@ static void put_row(weivel_layout *layout, const weivel_plugin *plugin, weivel_l
 static weivel_status begin_writing(weivel_layout *layout) {
     size_t arrays = layout->array_cursor;
     size_t total = arrays + layout->text_cursor;
-    layout->base = malloc(total == 0 ? 1 : total);
+    layout->base = weivel_memory_allocate(total == 0 ? 1 : total);
     if (layout->base == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -254,7 +255,7 @@ static void merge_runs(const weivel_reach_record **from, const weivel_reach_reco
 
 /** A bottom-up merge sort by sequence, since each plugin's own records arrive sorted and the core imports no qsort. */
 static weivel_status sort_by_sequence(const weivel_reach_record **records, size_t count) {
-    const weivel_reach_record **spare = malloc(count == 0 ? 1 : count * sizeof *spare);
+    const weivel_reach_record **spare = weivel_memory_allocate(count == 0 ? 1 : count * sizeof *spare);
     if (spare == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -279,7 +280,7 @@ static weivel_status gather_reported(const weivel_core *core, weivel_reported *r
     if (count > UINT32_MAX) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    reported->records = malloc(count == 0 ? 1 : count * sizeof *reported->records);
+    reported->records = weivel_memory_allocate(count == 0 ? 1 : count * sizeof *reported->records);
     if (reported->records == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }

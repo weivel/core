@@ -1,4 +1,5 @@
 #include "manifest.h"
+#include "memory.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -419,7 +420,7 @@ weivel_status weivel_manifest_copy(const weivel_manifest *callers, weivel_owned_
     }
     arena measuring = {NULL, 0};
     keep_manifest(&measuring, &view);
-    arena filling = {calloc(1, measuring.used == 0 ? 1 : measuring.used), 0};
+    arena filling = {weivel_memory_allocate_zeroed(1, measuring.used == 0 ? 1 : measuring.used), 0};
     if (filling.base == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -471,7 +472,7 @@ bool weivel_numbers_readable(const weivel_numbers *numbers) {
 bool weivel_strings_copy(const weivel_strings *source, weivel_strings *copy, void **storage) {
     arena measuring = {NULL, 0};
     keep_strings(&measuring, source);
-    arena filling = {calloc(1, measuring.used == 0 ? 1 : measuring.used), 0};
+    arena filling = {weivel_memory_allocate_zeroed(1, measuring.used == 0 ? 1 : measuring.used), 0};
     *storage = filling.base;
     if (filling.base == NULL) {
         return false;

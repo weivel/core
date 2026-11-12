@@ -1,4 +1,5 @@
 #include "capabilities.h"
+#include "memory.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +10,7 @@
 #include "text.h"
 
 weivel_capabilities *weivel_capabilities_create(void) {
-    weivel_capabilities *capabilities = calloc(1, sizeof *capabilities);
+    weivel_capabilities *capabilities = weivel_memory_allocate_zeroed(1, sizeof *capabilities);
     if (capabilities == NULL) {
         return NULL;
     }
@@ -72,7 +73,7 @@ static weivel_capability *capability_of(weivel_capabilities *capabilities, const
         return capability;
     }
     size_t length = strlen(id) + 1;
-    capability = malloc(sizeof *capability + length);
+    capability = weivel_memory_allocate(sizeof *capability + length);
     if (capability == NULL) {
         return NULL;
     }
@@ -136,7 +137,7 @@ static weivel_status add_provision(weivel_core *core, weivel_plugin *plugin, con
     if (capability == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_provision *provision = calloc(1, sizeof *provision);
+    weivel_provision *provision = weivel_memory_allocate_zeroed(1, sizeof *provision);
     weivel_status status = provision == NULL ? WEIVEL_STATUS_OUT_OF_MEMORY
                                              : weivel_handles_allocate(core->handles, WEIVEL_RECORD_PROVISION,
                                                                        provision, &provision->handle);
@@ -251,7 +252,7 @@ static weivel_status refuse_mismatch(weivel_core *core, weivel_plugin *plugin, b
     const char *what =
         missing ? "capabilities declared but never provided: " : "capabilities provided but never declared: ";
     size_t prefix = strlen(what);
-    char *detail = malloc(prefix + length + 1);
+    char *detail = weivel_memory_allocate(prefix + length + 1);
     if (detail == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -362,7 +363,7 @@ static weivel_capability_holding *hold(weivel_core *core, weivel_provision *prov
         core->registry->fail_next_holding = false;
         return NULL;
     }
-    holding = calloc(1, sizeof *holding);
+    holding = weivel_memory_allocate_zeroed(1, sizeof *holding);
     if (holding == NULL) {
         return NULL;
     }
@@ -400,7 +401,7 @@ static void revoke_holding(weivel_core *core, weivel_capability_holding *holding
  */
 static weivel_status hold_all(weivel_core *core, const weivel_capability *capability, weivel_plugin *plugin,
                               uint32_t count) {
-    weivel_capability_holding **made = malloc(count == 0 ? 1 : (size_t)count * sizeof *made);
+    weivel_capability_holding **made = weivel_memory_allocate(count == 0 ? 1 : (size_t)count * sizeof *made);
     if (made == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -431,7 +432,7 @@ static weivel_status fill_all(const weivel_capability *capability, weivel_capabi
          link != NULL && link != &capability->verified; link = link->next) {
         count++;
     }
-    weivel_capability_implementation *items = malloc(count == 0 ? 1 : (size_t)count * sizeof *items);
+    weivel_capability_implementation *items = weivel_memory_allocate(count == 0 ? 1 : (size_t)count * sizeof *items);
     if (items == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -525,7 +526,7 @@ static weivel_status add_watch(weivel_core *core, weivel_plugin *plugin, const c
     if (capability == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_capability_watch *watch = calloc(1, sizeof *watch);
+    weivel_capability_watch *watch = weivel_memory_allocate_zeroed(1, sizeof *watch);
     weivel_status status = watch == NULL ? WEIVEL_STATUS_OUT_OF_MEMORY
                                          : weivel_handles_allocate(core->handles, WEIVEL_RECORD_CAPABILITY_WATCH,
                                                                    watch, &watch->handle);

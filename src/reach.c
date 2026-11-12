@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "core_internal.h"
+#include "memory.h"
 #include "registry.h"
 #include "text.h"
 
@@ -12,7 +13,7 @@ static weivel_reach_record *append_record(weivel_registry *registry, weivel_plug
             return NULL;
         }
         uint32_t capacity = plugin->reported_capacity == 0 ? 4 : plugin->reported_capacity * 2;
-        weivel_reach_record *grown = realloc(plugin->reported, (size_t)capacity * sizeof *grown);
+        weivel_reach_record *grown = weivel_memory_reallocate(plugin->reported, (size_t)capacity * sizeof *grown);
         if (grown == NULL) {
             return NULL;
         }
@@ -20,7 +21,7 @@ static weivel_reach_record *append_record(weivel_registry *registry, weivel_plug
         plugin->reported_capacity = capacity;
     }
     size_t length = strlen(id) + 1;
-    char *copy = malloc(length);
+    char *copy = weivel_memory_allocate(length);
     if (copy == NULL) {
         return NULL;
     }

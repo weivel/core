@@ -1,4 +1,5 @@
 #include "deadlines.h"
+#include "memory.h"
 
 #include <stdlib.h>
 
@@ -25,7 +26,7 @@ struct weivel_deadlines {
 };
 
 weivel_deadlines *weivel_deadlines_create(void) {
-    weivel_deadlines *deadlines = calloc(1, sizeof *deadlines);
+    weivel_deadlines *deadlines = weivel_memory_allocate_zeroed(1, sizeof *deadlines);
     if (deadlines == NULL) {
         return NULL;
     }
@@ -96,7 +97,7 @@ static void sink(weivel_deadlines *deadlines, deadline *entry) {
 
 static bool grow(weivel_deadlines *deadlines) {
     size_t capacity = deadlines->capacity == 0 ? 8 : deadlines->capacity * 2;
-    deadline **heap = realloc(deadlines->heap, capacity * sizeof *heap);
+    deadline **heap = weivel_memory_reallocate(deadlines->heap, capacity * sizeof *heap);
     if (heap == NULL) {
         return false;
     }
@@ -134,7 +135,7 @@ weivel_status weivel_deadlines_add(weivel_deadlines *deadlines, int64_t at, weiv
     if (deadlines->count == deadlines->capacity && !grow(deadlines)) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    deadline *entry = malloc(sizeof *entry);
+    deadline *entry = weivel_memory_allocate(sizeof *entry);
     if (entry == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }

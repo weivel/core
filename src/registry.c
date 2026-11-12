@@ -1,4 +1,5 @@
 #include "registry.h"
+#include "memory.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -10,7 +11,7 @@
 #include "text.h"
 
 weivel_registry *weivel_registry_create(void) {
-    weivel_registry *registry = calloc(1, sizeof *registry);
+    weivel_registry *registry = weivel_memory_allocate_zeroed(1, sizeof *registry);
     if (registry == NULL) {
         return NULL;
     }
@@ -81,7 +82,7 @@ weivel_slot *weivel_registry_slot(weivel_registry *registry, const char *id) {
         return slot;
     }
     size_t length = strlen(id);
-    slot = calloc(1, sizeof *slot + length + 1);
+    slot = weivel_memory_allocate_zeroed(1, sizeof *slot + length + 1);
     if (slot == NULL) {
         return NULL;
     }
@@ -138,7 +139,7 @@ weivel_status weivel_registry_hold(weivel_core *core, weivel_registration *regis
         core->registry->fail_next_holding = false;
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_holding *holding = calloc(1, sizeof *holding);
+    weivel_holding *holding = weivel_memory_allocate_zeroed(1, sizeof *holding);
     if (holding == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -256,7 +257,7 @@ static char *join_well_known(const weivel_core *core) {
     for (uint32_t index = 0; index < core->well_known.count; index++) {
         length += strlen(core->well_known.items[index]) + (index == 0 ? 0 : 2);
     }
-    char *text = malloc(length + 1);
+    char *text = weivel_memory_allocate(length + 1);
     if (text == NULL) {
         return NULL;
     }
@@ -325,7 +326,7 @@ static const weivel_numbers *advertised_by(const weivel_plugin *owner, const cha
 
 static weivel_status add_registration(weivel_core *core, weivel_plugin *owner, weivel_slot *slot,
                                       weivel_handle *handle) {
-    weivel_registration *registration = calloc(1, sizeof *registration);
+    weivel_registration *registration = weivel_memory_allocate_zeroed(1, sizeof *registration);
     if (registration == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -519,7 +520,7 @@ static weivel_status add_watch(weivel_core *core, weivel_plugin *plugin, const c
     if (slot == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_watch *watch = calloc(1, sizeof *watch);
+    weivel_watch *watch = weivel_memory_allocate_zeroed(1, sizeof *watch);
     weivel_status status = watch == NULL ? WEIVEL_STATUS_OUT_OF_MEMORY
                                          : weivel_handles_allocate(core->handles, WEIVEL_RECORD_WATCH, watch,
                                                                    &watch->handle);
@@ -587,7 +588,7 @@ static weivel_status fill_list(const char *const *ids, uint32_t count, weivel_se
     for (uint32_t index = 0; index < count; index++) {
         total += strlen(ids[index]) + 1;
     }
-    void *storage = malloc(total == 0 ? 1 : total);
+    void *storage = weivel_memory_allocate(total == 0 ? 1 : total);
     if (storage == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -626,7 +627,7 @@ static bool consumed_without_provider(const weivel_core *core, const weivel_plug
 
 static weivel_status list_ids(const weivel_core *core, const weivel_plugin *plugin, uint32_t candidates,
                               weivel_listed listed, weivel_service_list *list) {
-    const char **ids = malloc((candidates == 0 ? 1 : candidates) * sizeof *ids);
+    const char **ids = weivel_memory_allocate((candidates == 0 ? 1 : candidates) * sizeof *ids);
     if (ids == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
