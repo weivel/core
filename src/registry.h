@@ -16,6 +16,8 @@ typedef struct weivel_slot {
     char *id;
     struct weivel_registration *registration;
     weivel_link waiters;
+    /** The constrained wants on the id, which settle only on their polls, so an arrival never walks them. */
+    weivel_link pollers;
     weivel_link watchers;
     weivel_link in_registry;
 } weivel_slot;
@@ -174,10 +176,7 @@ void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, 
 /** Withdraws a want without settling it. */
 void weivel_waiting_withdraw(weivel_core *core, weivel_want *want);
 
-/**
- * Settles, in the order they asked, every want on a slot that accepts what is registered there now. A constrained
- * want is passed over: it settles only on a poll.
- */
+/** Settles, in the order they asked, every want on a slot that accepts what is registered there now. */
 void weivel_waiting_arrival(weivel_core *core, weivel_slot *slot);
 
 /**

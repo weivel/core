@@ -75,8 +75,8 @@ static weivel_core *allocate_core(const weivel_core_options *options) {
     bool vocabulary_copied = weivel_vocabulary_copy(&options->constraint_vocabulary, &core->vocabulary);
     core->options.constraint_vocabulary.items = core->vocabulary.entries;
     core->options.constraint_vocabulary.count = core->vocabulary.count;
-    if (!host_copied || !well_known_copied || !vocabulary_copied || core->mutex == NULL || core->events == NULL || core->handles == NULL ||
-        core->deadlines == NULL || core->plugins == NULL || core->registry == NULL) {
+    if (!host_copied || !well_known_copied || !vocabulary_copied || core->mutex == NULL || core->events == NULL ||
+        core->handles == NULL || core->deadlines == NULL || core->plugins == NULL || core->registry == NULL) {
         free_core(core);
         return NULL;
     }

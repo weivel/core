@@ -61,10 +61,6 @@ void weivel_waiting_arrival(weivel_core *core, weivel_slot *slot) {
     while (link != head) {
         weivel_link *next = link->next;
         weivel_want *want = WEIVEL_RECORD_OF(link, weivel_want, by_slot);
-        if (want->constrained != NULL) {
-            link = next;
-            continue;
-        }
         if (weivel_registry_accepts(want->provider, registration)) {
             if (weivel_waiting_settle(core, want, registration, false) != WEIVEL_STATUS_OK) {
                 weivel_core_log(core, WEIVEL_LOG_ERROR, "memory ran out settling a want, so it still waits");
@@ -136,6 +132,17 @@ static weivel_status enqueue(weivel_core *core, weivel_want *want, const weivel_
     return WEIVEL_STATUS_OK;
 }
 
+static weivel_status refuse_unpolled(weivel_core *core, const char *id) {
+    char detail[512];
+    snprintf(detail, sizeof detail,
+             "weivel_want_service asked for service \"%s\", which the manifest constrains, without a poll interval",
+             id);
+    return weivel_core_refuse_malformed(
+        core, detail,
+        "give weivel_want_options a poll_millis of 1 or more; a budget is optional, and without one the want polls "
+        "until a provider meets its constraints");
+}
+
 static weivel_status decide(weivel_core *core, weivel_want *want, const char *id, const weivel_reach *reach,
                             const weivel_want_options *options) {
     if (reach->code != WEIVEL_REFUSAL_NONE) {
@@ -150,7 +157,10 @@ static weivel_status decide(weivel_core *core, weivel_want *want, const char *id
         return WEIVEL_STATUS_OK;
     }
     if (weivel_constraints_apply(reach->wanted)) {
-        weivel_list_append(&want->slot->waiters, &want->by_slot);
+        if (options->poll_millis <= 0) {
+            return refuse_unpolled(core, id);
+        }
+        weivel_list_append(&want->slot->pollers, &want->by_slot);
         weivel_list_append(&want->consumer->wants, &want->by_consumer);
         return weivel_constraints_start(core, want, reach->wanted, options);
     }
@@ -203,7 +213,7 @@ static bool read_want_options(const weivel_want_options *options, weivel_want_op
     bool timed = resolved->timed == WEIVEL_CHOICE_YES;
     bool budgeted = resolved->budgeted == WEIVEL_CHOICE_YES;
     bool timeout_valid = !timed || resolved->timeout_millis >= 0;
-    bool budget_valid = !budgeted || (resolved->budget_millis >= 0 && resolved->poll_millis > 0);
+    bool budget_valid = (!budgeted || resolved->budget_millis >= 0) && resolved->poll_millis >= 0;
     return resolved->timed <= WEIVEL_CHOICE_YES && resolved->budgeted <= WEIVEL_CHOICE_YES && timeout_valid &&
            budget_valid;
 }
@@ -226,11 +236,10 @@ weivel_status weivel_want_service(weivel_core *core, weivel_handle plugin, const
             "pass a non-empty service id and a pointer to a weivel_handle");
     } else if (!read_want_options(options, &resolved)) {
         status = weivel_core_refuse_malformed(
-            core, "weivel_want_service was given options too small, a timed or budgeted that is no weivel_choice, a "
-                  "negative timeout or budget, or a poll interval that is not positive, so the budget would never be "
-                  "spent",
-            "pass weivel_want_options initialised with WEIVEL_INIT, timed and budgeted WEIVEL_CHOICE_YES or NO, a "
-            "timeout and a budget of 0 or more, and a poll interval of 1 or more");
+            core, "weivel_want_service was given options too small, a timed or budgeted that is no weivel_choice, or a "
+                  "negative timeout, budget or poll interval",
+            "pass weivel_want_options initialised with WEIVEL_INIT, timed and budgeted WEIVEL_CHOICE_YES or NO, and a "
+            "timeout, a budget and a poll interval of 0 or more");
     } else {
         status = want_service(core, plugin, id, &resolved, want);
     }

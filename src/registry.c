@@ -41,6 +41,11 @@ static void free_slot(weivel_slot *slot) {
         weivel_list_remove(link);
         weivel_waiting_free(WEIVEL_RECORD_OF(link, weivel_want, by_slot));
     }
+    while (!weivel_list_empty(&slot->pollers)) {
+        weivel_link *link = slot->pollers.next;
+        weivel_list_remove(link);
+        weivel_waiting_free(WEIVEL_RECORD_OF(link, weivel_want, by_slot));
+    }
     while (!weivel_list_empty(&slot->watchers)) {
         weivel_link *link = slot->watchers.next;
         weivel_list_remove(link);
@@ -82,6 +87,7 @@ weivel_slot *weivel_registry_slot(weivel_registry *registry, const char *id) {
     slot->id = (char *)(slot + 1);
     memcpy(slot->id, id, length + 1);
     weivel_list_init(&slot->waiters);
+    weivel_list_init(&slot->pollers);
     weivel_list_init(&slot->watchers);
     if (weivel_table_add_text(registry->slots, slot->id, slot) != WEIVEL_STATUS_OK) {
         free(slot);
@@ -93,7 +99,8 @@ weivel_slot *weivel_registry_slot(weivel_registry *registry, const char *id) {
 }
 
 void weivel_registry_release_slot(weivel_registry *registry, weivel_slot *slot) {
-    if (slot->registration != NULL || !weivel_list_empty(&slot->waiters) || !weivel_list_empty(&slot->watchers)) {
+    if (slot->registration != NULL || !weivel_list_empty(&slot->waiters) || !weivel_list_empty(&slot->pollers) ||
+        !weivel_list_empty(&slot->watchers)) {
         return;
     }
     weivel_table_remove_text(registry->slots, slot->id);

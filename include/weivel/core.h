@@ -833,11 +833,6 @@ WEIVEL_API weivel_status weivel_unregister(weivel_core *core, weivel_handle hand
 WEIVEL_API weivel_status weivel_get_service(weivel_core *core, weivel_handle plugin, const char *id,
                                             weivel_handle *implementation, uint32_t *pending_events);
 
-/** The budget a constrained want spends when its options give none. */
-#define WEIVEL_DEFAULT_BUDGET_MILLIS 30000
-/** How often a constrained want polls when its options give no budget. */
-#define WEIVEL_DEFAULT_POLL_MILLIS 1000
-
 /** How long a want may wait. Zero, or a field beyond `size`, means the default: no deadline at all. */
 typedef struct weivel_want_options {
     uint32_t size;
@@ -854,14 +849,17 @@ typedef struct weivel_want_options {
     /** How long after `now` the want gives up, at least 0; read only when `timed` is YES. */
     int64_t timeout_millis;
     /**
-     * Whether `budget_millis` and `poll_millis` are given, a weivel_choice, read only for a constrained want.
-     * Default NO: WEIVEL_DEFAULT_BUDGET_MILLIS polled every WEIVEL_DEFAULT_POLL_MILLIS. Appended after
-     * `timeout_millis`.
+     * Whether a constrained want has a budget, a weivel_choice, read only for one. Default NO, so it polls for as
+     * long as it takes: it is never refused for time, and never degrades, since its budget is never spent. Appended
+     * after `timeout_millis`.
      */
     uint32_t budgeted;
-    /** How long a constrained want polls before it degrades or is refused, at least 0. */
+    /** How long a constrained want polls before it degrades or is refused, at least 0; read only when `budgeted`. */
     int64_t budget_millis;
-    /** How often it polls, more than 0. */
+    /**
+     * How often a constrained want polls, at least 0. Required for a constrained want, which the core never gives a
+     * default: 0, or options of an earlier shape, make that want malformed.
+     */
     int64_t poll_millis;
 } weivel_want_options;
 
@@ -878,8 +876,8 @@ typedef struct weivel_want_options {
  *
  * A want is constrained when the plugin's manifest gives `id` constraints. It never settles on a registration
  * alone: it polls, because a provider's capacity is live and the core never calls out to read it. Poll k starts at
- * `now + k * poll_millis` and lasts until the next one starts, from poll 0 to the first whose start is
- * `budget_millis` or more after `now`, the last. At each poll:
+ * `now + k * poll_millis` and lasts until the next one starts. Without a budget it polls without end. With one,
+ * the last poll is the first whose start is `budget_millis` or more after `now`. At each poll:
  *
  * 1. When a registration it accepts is under `id`, a WEIVEL_EVENT_CAPACITY_WANTED asks that provider for its
  *    attributes. The answer is laid over what the provider's manifest advertises for `id`, name by name, so a live
@@ -887,7 +885,7 @@ typedef struct weivel_want_options {
  *    Nothing is carried from one poll to the next: a poll the provider does not answer in time is "not right now".
  * 2. When those attributes meet every constraint, under the host's vocabulary, a second question asks whether the
  *    provider serves the consumer under them, and a yes settles the want with that registration.
- * 3. After the last poll the budget is spent. A want that does not degrade, or whose service nothing provides, is
+ * 3. After the last poll of a budgeted want the budget is spent. A want that does not degrade, or whose service nothing provides, is
  *    rejected with WEIVEL_REFUSAL_UNMET_CONSTRAINT. A degradable one asks once more under its constraints, then
  *    unconstrained, each question answerable for `poll_millis`, and settles degraded with the first yes, or is
  *    rejected with WEIVEL_REFUSAL_NOT_SERVED.
@@ -896,12 +894,13 @@ typedef struct weivel_want_options {
  * acts on; a poll whose time has wholly passed by then is skipped, never asked late. A constraint the vocabulary
  * does not name is logged once, at the want's start, and is never met.
  *
- * @param options may be NULL for no deadline and the default budget; read only during the call.
+ * @param options may be NULL for no deadline, except for a constrained want, which needs `poll_millis`; read only
+ * during the call.
  * @param want receives the want handle, which names the want until it settles. Required.
  * @return WEIVEL_STATUS_OK with a want, including one rejected at once; WEIVEL_STATUS_REFUSED for a stale plugin
  * or one never opened; WEIVEL_STATUS_MALFORMED for a NULL core, id or want, an empty id, options below their first
- * shape, `timed` or `budgeted` no weivel_choice, a negative timeout, a negative budget or a poll interval that is
- * not positive; WEIVEL_STATUS_OUT_OF_MEMORY.
+ * shape, `timed` or `budgeted` no weivel_choice, a negative timeout, budget or poll interval, or a constrained want
+ * with no poll interval; WEIVEL_STATUS_OUT_OF_MEMORY.
  * Threading: any thread.
  */
 WEIVEL_API weivel_status weivel_want_service(weivel_core *core, weivel_handle plugin, const char *id,
@@ -934,6 +933,9 @@ typedef struct weivel_capacity {
  * @param registration the registration the event named.
  * @param capacity the answer. Required; read only during the call.
  * @param now the caller's time now.
+ * A yes is acted on only once the consumer's holding of the service is recorded. When memory for it runs out the
+ * call answers WEIVEL_STATUS_OUT_OF_MEMORY, nothing changes, and the question stays open to be answered again.
+ *
  * @return WEIVEL_STATUS_OK when the answer counted; WEIVEL_STATUS_NONE when it answers no open question, queuing
  * nothing; WEIVEL_STATUS_REFUSED for a want handle that names no want (WEIVEL_REFUSAL_STALE_HANDLE), queuing a
  * refusal; WEIVEL_STATUS_MALFORMED for a NULL core or capacity, a capacity below its first shape or attributes that
