@@ -30,7 +30,6 @@
  * - Enums. Enumerations travel in struct fields as uint32_t, so their width never depends on the compiler.
  */
 
-#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -122,6 +121,13 @@ typedef enum weivel_event_kind {
 } weivel_event_kind;
 
 /**
+ * How many 64-bit words an event's payload union spans. Part of the event's first published shape, so it never
+ * shrinks; a payload that outgrows it enlarges the union and so `sizeof(weivel_event)`, which the size convention
+ * absorbs.
+ */
+#define WEIVEL_EVENT_PAYLOAD_WORDS 16
+
+/**
  * One event, filled by weivel_next_event into a struct the caller owns.
  *
  * Every string any payload carries lives in `storage` and stays valid until weivel_event_release, whatever other
@@ -134,14 +140,18 @@ typedef struct weivel_event {
     union {
         weivel_log_event log;
         weivel_refusal refusal;
-        uint64_t reserved[16];
+        uint64_t reserved[WEIVEL_EVENT_PAYLOAD_WORDS];
     } data;
 } weivel_event;
+
+/** The largest `initial_event_capacity` weivel_core_create accepts. */
+#define WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY 65536u
 
 /** Options for weivel_core_create. Zero, or a field beyond `size`, means the default. */
 typedef struct weivel_core_options {
     uint32_t size;
-    /** How many events the queue holds before it first grows. Default 16. */
+    /** How many events the queue holds before it first grows. Default 16; above
+     * WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY the call is malformed. */
     uint32_t initial_event_capacity;
     /** The least level of log event the core queues, a weivel_log_level. Default WEIVEL_LOG_WARNING. */
     uint32_t minimum_log_level;
@@ -153,7 +163,9 @@ typedef struct weivel_core_options {
  * @param options may be NULL for every default; read only during the call.
  * @param core receives the new core, owned by the caller until weivel_core_destroy. Required.
  * @param pending_events receives how many events wait; may be NULL.
- * @return WEIVEL_STATUS_OK, WEIVEL_STATUS_MALFORMED, or WEIVEL_STATUS_OUT_OF_MEMORY with `*core` set to NULL.
+ * @return WEIVEL_STATUS_OK, or WEIVEL_STATUS_MALFORMED (no `core`, options smaller than their first shape, or an
+ * initial_event_capacity above its maximum) or WEIVEL_STATUS_OUT_OF_MEMORY, with `*core` set to NULL when `core` is
+ * given. No core exists to carry a refusal event for either.
  * Threading: any thread.
  */
 WEIVEL_API weivel_status weivel_core_create(const weivel_core_options *options, weivel_core **core,
@@ -163,6 +175,7 @@ WEIVEL_API weivel_status weivel_core_create(const weivel_core_options *options, 
  * Destroys a core and every event still queued in it. Every handle it issued becomes meaningless. Events already
  * drained stay valid until their own release.
  *
+ * @return WEIVEL_STATUS_OK, also for a NULL core, which is a no-op.
  * Threading: no other call on this core may be in flight or follow.
  */
 WEIVEL_API weivel_status weivel_core_destroy(weivel_core *core);
@@ -171,16 +184,21 @@ WEIVEL_API weivel_status weivel_core_destroy(weivel_core *core);
  * Moves the oldest queued event into `event`, which the caller owns. Events come out once each, in the order they
  * were queued.
  *
- * @param event the caller's struct with `size` set; on WEIVEL_STATUS_OK it holds the event and must be passed to
- * weivel_event_release; on WEIVEL_STATUS_NONE its kind is WEIVEL_EVENT_NONE and it holds nothing to release.
+ * @param event the caller's struct with `size` set and kind WEIVEL_EVENT_NONE, as WEIVEL_INIT or a release leaves
+ * it; on WEIVEL_STATUS_OK it holds the event and must be passed to weivel_event_release.
  * @param pending_events receives how many events still wait; may be NULL.
+ * @return WEIVEL_STATUS_OK with an event; WEIVEL_STATUS_NONE when none waits, leaving `event` empty with nothing to
+ * release; WEIVEL_STATUS_MALFORMED for a NULL core or event, a size below the first shape, or an event whose kind is
+ * not WEIVEL_EVENT_NONE (an unreleased event is never overwritten), queuing a refusal when the core is given.
  * Threading: any thread.
  */
 WEIVEL_API weivel_status weivel_next_event(weivel_core *core, weivel_event *event, uint32_t *pending_events);
 
 /**
- * Frees what an event carries and leaves it WEIVEL_EVENT_NONE. Releasing a NONE event does nothing.
+ * Frees what an event carries and leaves it WEIVEL_EVENT_NONE.
  *
+ * @return WEIVEL_STATUS_OK, also as a no-op for a NONE event or an all-zero one (size 0); WEIVEL_STATUS_MALFORMED
+ * for NULL or a size between 1 and the event's first shape.
  * Threading: any thread; needs no core, and may run after the core that queued it is destroyed.
  */
 WEIVEL_API weivel_status weivel_event_release(weivel_event *event);
@@ -200,6 +218,7 @@ WEIVEL_API weivel_status weivel_next_deadline(weivel_core *core, int64_t *deadli
  * Tells the core the time is now `now`, settling every deadline at or before it, and nothing after it.
  *
  * @param pending_events receives how many events wait; may be NULL.
+ * @return WEIVEL_STATUS_OK, or WEIVEL_STATUS_MALFORMED for a NULL core.
  * Threading: any thread.
  */
 WEIVEL_API weivel_status weivel_advance(weivel_core *core, int64_t now, uint32_t *pending_events);

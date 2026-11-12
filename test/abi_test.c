@@ -54,6 +54,7 @@ static void an_event_is_written_only_within_the_callers_size(void) {
     guarded_event guarded;
     memset(&guarded, 0xab, sizeof guarded);
     guarded.event.size = (uint32_t)sizeof guarded.event;
+    guarded.event.kind = WEIVEL_EVENT_NONE;
 
     CHECK(weivel_next_event(core, &guarded.event, NULL) == WEIVEL_STATUS_OK);
     CHECK(guarded.event.kind == WEIVEL_EVENT_REFUSAL);
@@ -69,6 +70,7 @@ static void a_newer_callers_appended_event_fields_read_as_zero(void) {
     newer_event newer;
     memset(&newer, 0xff, sizeof newer);
     newer.event.size = (uint32_t)sizeof newer;
+    newer.event.kind = WEIVEL_EVENT_NONE;
 
     CHECK(weivel_next_event(core, &newer.event, NULL) == WEIVEL_STATUS_OK);
     for (size_t index = 0; index < 4; index++) {
