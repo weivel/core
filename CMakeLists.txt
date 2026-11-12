@@ -23,6 +23,7 @@ endfunction()
 
 set(WEIVEL_CORE_SOURCES
     src/activation.c
+    src/capabilities.c
     src/compatibility.c
     src/constraints.c
     src/core.c

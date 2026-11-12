@@ -36,6 +36,7 @@ weivel_status weivel_events_push_want(weivel_events *events, const weivel_want_e
 
 weivel_status weivel_events_push_watch(weivel_events *events, const weivel_watch_event *heard);
 weivel_status weivel_events_push_revoked(weivel_events *events, const weivel_revoked_event *revoked);
+weivel_status weivel_events_push_capability(weivel_events *events, const weivel_capability_event *heard);
 
 /** Queues a capacity question, copying `constraints`, which may be NULL for none, into the event's storage. */
 weivel_status weivel_events_push_capacity(weivel_events *events, const weivel_capacity_event *asked,
