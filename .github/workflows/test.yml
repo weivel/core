@@ -14,3 +14,16 @@ jobs:
       cmake_configure: '-S . -B build'
       cmake_build: '--build build --config Debug'
       cmake_test: 'ctest --test-dir build --output-on-failure -C Debug'
+
+  sanitizers:
+    uses: intisy/workflows/.github/workflows/test.yml@main
+    with:
+      toolchains: cmake
+      runners: '["ubuntu-latest"]'
+      cmake_configure: >-
+        -S . -B build -DCMAKE_BUILD_TYPE=Debug
+        "-DCMAKE_C_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+        "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined"
+        "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address,undefined"
+      cmake_build: '--build build --config Debug'
+      cmake_test: 'ctest --test-dir build --output-on-failure -C Debug'
