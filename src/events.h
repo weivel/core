@@ -2,6 +2,7 @@
 #define WEIVEL_EVENTS_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <weivel/core.h>
 
 /** A first-in first-out queue of full-size events, each owning its `storage`. */
