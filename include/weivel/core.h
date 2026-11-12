@@ -1062,8 +1062,9 @@ WEIVEL_API weivel_status weivel_provide_capability(weivel_core *core, weivel_han
 /**
  * Checks a plugin's activation: every capability its manifest provides must have been provided, and nothing else.
  * When it passes, each implementation the plugin provided joins the answers for its capability, after every one
- * verified before it, and each watch of that capability hears WEIVEL_CAPABILITY_PROVIDED. Verifying it again
- * admits nothing new, since anything it provided since is undeclared and so refused.
+ * verified before it, and each watch of that capability hears WEIVEL_CAPABILITY_PROVIDED. A capability provided
+ * after a passing verify is answered OK with a handle that never joins: it is undeclared, so the next verify refuses
+ * the plugin.
  *
  * When it does not pass, nothing joins, and the caller quarantines the plugin.
  *

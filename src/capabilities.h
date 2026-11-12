@@ -8,11 +8,9 @@
 #include "plugins.h"
 #include "table.h"
 
-/** Everything known about one capability id: who provided it, which of those are verified, and who watches it. */
 typedef struct weivel_capability {
     /** Points just past the record, in the same allocation. */
     char *id;
-    /** Its provisions, in the order provided, verified or not. */
     weivel_link provided;
     /** Its verified provisions, in the order their plugins' activations were verified: what `all` answers. */
     weivel_link verified;
@@ -20,7 +18,6 @@ typedef struct weivel_capability {
     weivel_link in_capabilities;
 } weivel_capability;
 
-/** One implementation a plugin provided. The core holds no object: `handle` stands for it. */
 typedef struct weivel_provision {
     weivel_handle handle;
     weivel_capability *capability;
@@ -58,7 +55,6 @@ typedef struct weivel_capabilities {
     /** From each capability id to its record, freed when nothing provides or watches it. */
     weivel_table *by_id;
     weivel_link all;
-    /** From a weivel_capability_holding_key to its holding, so holding twice is found without a scan. */
     weivel_table *holdings;
     uint32_t holding_count;
     uint32_t count;
@@ -72,12 +68,12 @@ weivel_capabilities *weivel_capabilities_create(void);
 void weivel_capabilities_destroy(weivel_capabilities *capabilities);
 
 /**
- * Takes every capability from a plugin: each verified implementation it provided is withdrawn and every watch of
- * its capability told, then its provisions go, then its own capability watches stop.
+ * Takes every capability from a plugin: each implementation it provided is revoked to its holders and, when
+ * verified, withdrawn to every watch of its capability, then its own capability watches stop, then what it holds is
+ * revoked to it.
  */
 void weivel_capabilities_strip(weivel_core *core, weivel_plugin *plugin);
 
-/** Stops the capability watch `handle` names; false when it names none. */
 bool weivel_capabilities_end_watch(weivel_core *core, weivel_handle handle);
 
 #endif

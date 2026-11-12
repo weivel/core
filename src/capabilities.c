@@ -1,5 +1,6 @@
 #include "capabilities.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -113,15 +114,34 @@ static void tell_watchers(weivel_core *core, const weivel_provision *provision, 
     }
 }
 
+/** Formats into an allocation of exactly the size needed, so a long id is never cut; NULL when memory runs out. */
+static char *formatted(const char *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    va_list measuring;
+    va_copy(measuring, arguments);
+    int length = vsnprintf(NULL, 0, format, measuring);
+    va_end(measuring);
+    char *text = length < 0 ? NULL : malloc((size_t)length + 1);
+    if (text != NULL) {
+        vsnprintf(text, (size_t)length + 1, format, arguments);
+    }
+    va_end(arguments);
+    return text;
+}
+
 static bool is_id(const char *id) {
     return id != NULL && id[0] != '\0';
 }
 
 static weivel_status refuse_provided_twice(weivel_core *core, const char *id) {
-    char detail[384];
-    snprintf(detail, sizeof detail, "provided capability \"%s\" twice", id);
+    char *detail = formatted("provided capability \"%s\" twice", id);
+    if (detail == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
     weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_PROVIDED_TWICE, detail,
                                "provide each capability once while the plugin activates");
+    free(detail);
     return WEIVEL_STATUS_REFUSED;
 }
 
@@ -293,12 +313,15 @@ static void admit(weivel_core *core, weivel_plugin *plugin) {
 
 static weivel_status refuse_not_open(weivel_core *core, const weivel_plugin *plugin) {
     bool released = plugin->state == WEIVEL_PLUGIN_RELEASED;
-    char detail[384];
-    snprintf(detail, sizeof detail, "the plugin \"%s\" %s", plugin->manifest.value.import_name,
-             released ? "was released" : "is quarantined");
+    char *detail = formatted("the plugin \"%s\" %s", plugin->manifest.value.import_name,
+                             released ? "was released" : "is quarantined");
+    if (detail == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
     weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_PLUGIN_STATE, detail,
                                released ? "register its manifest again, and use the handle that answers"
                                         : "open it again, and verify the activation that follows");
+    free(detail);
     return WEIVEL_STATUS_REFUSED;
 }
 
