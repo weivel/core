@@ -11,11 +11,16 @@
 #define WEIVEL_SERVICE_WANT_FIRST_SIZE (offsetof(weivel_service_want, degradable) + sizeof(uint32_t))
 #define WEIVEL_NUMBER_FIRST_SIZE (offsetof(weivel_number, value) + sizeof(double))
 
-/** What is wrong with a manifest's shape, as the two texts of its refusal. */
+/**
+ * What is wrong with a manifest's shape, as the two texts of its refusal, each built at its length and NULL when
+ * memory ran out, owned until weivel_manifest_problem_free.
+ */
 typedef struct weivel_manifest_problem {
-    char detail[384];
-    char fix[256];
+    char *detail;
+    char *fix;
 } weivel_manifest_problem;
+
+void weivel_manifest_problem_free(weivel_manifest_problem *problem);
 
 /**
  * A manifest the core owns. Every pointer in `value` points into `storage`, every struct in it is at today's size,

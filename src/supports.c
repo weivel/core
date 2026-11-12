@@ -34,7 +34,9 @@ static weivel_status decide(const weivel_core *core, const weivel_manifest *mani
     weivel_manifest_problem problem;
     weivel_status status = weivel_manifest_copy(manifest, &owned, &problem);
     if (status == WEIVEL_STATUS_REFUSED) {
-        return refuse_shape(answer, &problem);
+        status = refuse_shape(answer, &problem);
+        weivel_manifest_problem_free(&problem);
+        return status;
     }
     if (status == WEIVEL_STATUS_OK) {
         status = weivel_compatibility_decide(&core->host, &owned.value, answer);

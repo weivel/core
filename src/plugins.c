@@ -203,20 +203,26 @@ static weivel_status declare_capabilities(weivel_plugin *plugin) {
     return status;
 }
 
-static weivel_status refuse_taken_name(weivel_core *core, const char *import_name) {
-    char detail[384];
-    snprintf(detail, sizeof detail, "a plugin named \"%s\" is already registered", import_name);
-    weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_NAME_TAKEN, detail,
-                               "give this plugin its own import name, or release the plugin registered under it");
+/** Queues a refusal whose detail weivel_text_format built, or answers out of memory when it could not. */
+static weivel_status refuse_with(weivel_core *core, uint32_t code, char *detail, const char *fix) {
+    if (detail == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    weivel_events_push_refusal(core->events, code, detail, fix);
+    free(detail);
     return WEIVEL_STATUS_REFUSED;
 }
 
+static weivel_status refuse_taken_name(weivel_core *core, const char *import_name) {
+    return refuse_with(core, WEIVEL_REFUSAL_NAME_TAKEN,
+                       weivel_text_format("a plugin named \"%s\" is already registered", import_name),
+                       "give this plugin its own import name, or release the plugin registered under it");
+}
+
 static weivel_status refuse_identity(weivel_core *core, const char *identity) {
-    char detail[384];
-    snprintf(detail, sizeof detail, "a plugin with the identity \"%s\" is already registered", identity);
-    weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_IDENTITY_TAKEN, detail,
-                               "give each plugin its own identity, or release the plugin that holds it");
-    return WEIVEL_STATUS_REFUSED;
+    return refuse_with(core, WEIVEL_REFUSAL_IDENTITY_TAKEN,
+                       weivel_text_format("a plugin with the identity \"%s\" is already registered", identity),
+                       "give each plugin its own identity, or release the plugin that holds it");
 }
 
 static weivel_status refuse_manifest(weivel_core *core, const weivel_manifest_problem *problem) {
@@ -259,6 +265,7 @@ static weivel_status register_manifest(weivel_core *core, const weivel_manifest 
         status = keep_plugin(core, plugin);
     } else if (status == WEIVEL_STATUS_REFUSED) {
         refuse_manifest(core, &problem);
+        weivel_manifest_problem_free(&problem);
     }
     if (status != WEIVEL_STATUS_OK) {
         free_plugin(plugin);
@@ -307,10 +314,8 @@ weivel_status weivel_core_plugin(weivel_core *core, weivel_handle handle, weivel
 }
 
 static weivel_status refuse_state(weivel_core *core, const weivel_plugin *plugin, const char *what, const char *fix) {
-    char detail[384];
-    snprintf(detail, sizeof detail, "the plugin \"%s\" %s", plugin->manifest.value.import_name, what);
-    weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_PLUGIN_STATE, detail, fix);
-    return WEIVEL_STATUS_REFUSED;
+    return refuse_with(core, WEIVEL_REFUSAL_PLUGIN_STATE,
+                       weivel_text_format("the plugin \"%s\" %s", plugin->manifest.value.import_name, what), fix);
 }
 
 static weivel_status refuse_released(weivel_core *core, const weivel_plugin *plugin) {

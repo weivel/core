@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "sized.h"
+#include "text.h"
 
 typedef struct element_list {
     const unsigned char *items;
@@ -17,37 +18,39 @@ typedef struct shape_check {
     weivel_manifest_problem *problem;
 } shape_check;
 
-static bool refuse_shape(shape_check *check, const char *detail, const char *fix) {
-    snprintf(check->problem->detail, sizeof check->problem->detail, "the manifest of \"%s\" %s", check->plugin,
-             detail);
-    snprintf(check->problem->fix, sizeof check->problem->fix, "%s", fix);
+void weivel_manifest_problem_free(weivel_manifest_problem *problem) {
+    free(problem->detail);
+    free(problem->fix);
+    problem->detail = NULL;
+    problem->fix = NULL;
+}
+
+/** Fills the problem from `detail` and `fix`, each built by weivel_text_format or NULL, and frees both. */
+static bool refuse_shape(shape_check *check, char *detail, char *fix) {
+    check->problem->detail = weivel_text_format("the manifest of \"%s\" %s", check->plugin,
+                                                detail == NULL ? "is malformed" : detail);
+    check->problem->fix = fix;
+    free(detail);
     return false;
 }
 
 static bool refuse_null_items(shape_check *check, const char *field, uint32_t count) {
-    char detail[256];
-    char fix[256];
-    snprintf(detail, sizeof detail, "declares %u %s in %s but gives none", (unsigned)count,
-             count == 1 ? "entry" : "entries", field);
-    snprintf(fix, sizeof fix, "list the entries of %s, or declare none", field);
-    return refuse_shape(check, detail, fix);
+    return refuse_shape(check,
+                        weivel_text_format("declares %u %s in %s but gives none", (unsigned)count,
+                                           count == 1 ? "entry" : "entries", field),
+                        weivel_text_format("list the entries of %s, or declare none", field));
 }
 
 static bool refuse_missing(shape_check *check, const char *field, uint32_t index, const char *what,
                            const char *one) {
-    char detail[256];
-    char fix[256];
-    snprintf(detail, sizeof detail, "has an entry with no %s in %s (entry %u)", what, field, (unsigned)index + 1);
-    snprintf(fix, sizeof fix, "give entry %u of %s %s %s, or remove it", (unsigned)index + 1, field, one, what);
-    return refuse_shape(check, detail, fix);
+    return refuse_shape(
+        check, weivel_text_format("has an entry with no %s in %s (entry %u)", what, field, (unsigned)index + 1),
+        weivel_text_format("give entry %u of %s %s %s, or remove it", (unsigned)index + 1, field, one, what));
 }
 
 static bool refuse_twice(shape_check *check, const char *field, const char *value) {
-    char detail[384];
-    char fix[256];
-    snprintf(detail, sizeof detail, "lists \"%s\" twice in %s", value, field);
-    snprintf(fix, sizeof fix, "list \"%s\" once in %s", value, field);
-    return refuse_shape(check, detail, fix);
+    return refuse_shape(check, weivel_text_format("lists \"%s\" twice in %s", value, field),
+                        weivel_text_format("list \"%s\" once in %s", value, field));
 }
 
 static bool is_empty(const char *text) {
@@ -109,18 +112,20 @@ static bool check_elements(shape_check *check, const element_list *list, size_t 
     if (list->items == NULL) {
         return refuse_null_items(check, field, list->count);
     }
-    char detail[384];
     if (list->stride < first_size) {
-        snprintf(detail, sizeof detail, "gives %s elements of size %u, smaller than their first shape of %u", field,
-                 (unsigned)list->stride, (unsigned)first_size);
-        return refuse_shape(check, detail, "initialise each element with WEIVEL_INIT");
+        return refuse_shape(check,
+                            weivel_text_format("gives %s elements of size %u, smaller than their first shape of %u",
+                                               field, (unsigned)list->stride, (unsigned)first_size),
+                            weivel_text_format("initialise each element with WEIVEL_INIT"));
     }
     for (uint32_t index = 1; index < list->count; index++) {
         uint32_t size = weivel_sized_size(element_at(list, index));
         if (size != list->stride) {
-            snprintf(detail, sizeof detail, "gives entry %u of %s size %u where its first entry gives %u",
-                     (unsigned)index + 1, field, (unsigned)size, (unsigned)list->stride);
-            return refuse_shape(check, detail, "build each list as one array of one element type");
+            return refuse_shape(check,
+                                weivel_text_format("gives entry %u of %s size %u where its first entry gives %u",
+                                                   (unsigned)index + 1, field, (unsigned)size,
+                                                   (unsigned)list->stride),
+                                weivel_text_format("build each list as one array of one element type"));
         }
     }
     return true;
@@ -170,6 +175,18 @@ static bool check_numbers(shape_check *check, const weivel_numbers *numbers, con
     return true;
 }
 
+/** Checks a service's numbers under a field named for the service, built at its length. */
+static bool check_named_numbers(shape_check *check, const weivel_numbers *numbers, const char *what,
+                                const char *service) {
+    if (numbers->count == 0) {
+        return true;
+    }
+    char *field = weivel_text_format("%s \"%s\"", what, service);
+    bool passed = check_numbers(check, numbers, field == NULL ? what : field);
+    free(field);
+    return passed;
+}
+
 static bool offer_named_before(const element_list *list, uint32_t index, const char *id) {
     for (uint32_t earlier = 0; earlier < index; earlier++) {
         if (strcmp(offer_at(list, earlier).id, id) == 0) {
@@ -196,15 +213,13 @@ static bool check_offers(shape_check *check, const weivel_service_offers *offers
     }
     for (uint32_t index = 0; index < list.count; index++) {
         weivel_service_offer offer = offer_at(&list, index);
-        char attributes[192];
         if (is_empty(offer.id)) {
             return refuse_missing(check, field, index, "id", "an");
         }
         if (offer_named_before(&list, index, offer.id)) {
             return refuse_twice(check, field, offer.id);
         }
-        snprintf(attributes, sizeof attributes, "the attributes of the service \"%s\"", offer.id);
-        if (!check_numbers(check, &offer.attributes, attributes)) {
+        if (!check_named_numbers(check, &offer.attributes, "the attributes of the service", offer.id)) {
             return false;
         }
     }
@@ -215,11 +230,11 @@ static bool check_choice(shape_check *check, uint32_t choice, const char *servic
     if (choice <= WEIVEL_CHOICE_YES) {
         return true;
     }
-    char detail[256];
-    snprintf(detail, sizeof detail,
-             "says whether the service \"%s\" is %s with %u, which is neither yes, no nor absent", service, name,
-             (unsigned)choice);
-    return refuse_shape(check, detail, "set it to WEIVEL_CHOICE_DEFAULT, WEIVEL_CHOICE_NO or WEIVEL_CHOICE_YES");
+    return refuse_shape(
+        check,
+        weivel_text_format("says whether the service \"%s\" is %s with %u, which is neither yes, no nor absent",
+                           service, name, (unsigned)choice),
+        weivel_text_format("set it to WEIVEL_CHOICE_DEFAULT, WEIVEL_CHOICE_NO or WEIVEL_CHOICE_YES"));
 }
 
 static bool check_wants(shape_check *check, const weivel_service_wants *wants) {
@@ -230,17 +245,15 @@ static bool check_wants(shape_check *check, const weivel_service_wants *wants) {
     }
     for (uint32_t index = 0; index < list.count; index++) {
         weivel_service_want want = want_at(&list, index);
-        char constraints[192];
         if (is_empty(want.id)) {
             return refuse_missing(check, field, index, "id", "an");
         }
         if (want_named_before(&list, index, want.id)) {
             return refuse_twice(check, field, want.id);
         }
-        snprintf(constraints, sizeof constraints, "the constraints on the service \"%s\"", want.id);
         if (!check_choice(check, want.optional, want.id, "optional") ||
             !check_choice(check, want.degradable, want.id, "degradable") ||
-            !check_numbers(check, &want.constraints, constraints)) {
+            !check_named_numbers(check, &want.constraints, "the constraints on the service", want.id)) {
             return false;
         }
     }
@@ -248,18 +261,16 @@ static bool check_wants(shape_check *check, const weivel_service_wants *wants) {
 }
 
 static bool check_shape(const weivel_manifest *manifest, weivel_manifest_problem *problem) {
+    shape_check check = {manifest->import_name, problem};
     if (is_empty(manifest->import_name)) {
-        snprintf(problem->detail, sizeof problem->detail, "the manifest has no import name");
-        snprintf(problem->fix, sizeof problem->fix, "give the manifest an import name");
+        problem->detail = weivel_text_format("the manifest has no import name");
+        problem->fix = weivel_text_format("give the manifest an import name");
         return false;
     }
     if (manifest->identity != NULL && manifest->identity[0] == '\0') {
-        snprintf(problem->detail, sizeof problem->detail, "the manifest of \"%s\" gives an empty identity",
-                 manifest->import_name);
-        snprintf(problem->fix, sizeof problem->fix, "give it an identity, or none for its import name");
-        return false;
+        return refuse_shape(&check, weivel_text_format("gives an empty identity"),
+                            weivel_text_format("give it an identity, or none for its import name"));
     }
-    shape_check check = {manifest->import_name, problem};
     return check_strings(&check, &manifest->targets, "targets") &&
            check_strings(&check, &manifest->capabilities.provides, "the capabilities it provides") &&
            check_strings(&check, &manifest->capabilities.consumes, "the capabilities it consumes") &&
@@ -401,6 +412,8 @@ weivel_status weivel_manifest_copy(const weivel_manifest *callers, weivel_owned_
     weivel_manifest view;
     weivel_sized_read(&view, sizeof view, callers);
     memset(owned, 0, sizeof *owned);
+    problem->detail = NULL;
+    problem->fix = NULL;
     if (!check_shape(&view, problem)) {
         return WEIVEL_STATUS_REFUSED;
     }

@@ -7,6 +7,7 @@
 #include "core_internal.h"
 #include "registry.h"
 #include "sized.h"
+#include "text.h"
 
 void weivel_waiting_free(weivel_want *want) {
     weivel_constraints_free(want->constrained);
@@ -76,13 +77,13 @@ void weivel_waiting_arrival(weivel_core *core, weivel_slot *slot) {
 }
 
 static void time_out(weivel_core *core, weivel_want *want) {
-    char detail[384];
-    char fix[384];
-    snprintf(detail, sizeof detail, "waited %" PRId64 "ms for service \"%s\" and nothing registered it",
-             want->timeout_millis, want->slot->id);
-    snprintf(fix, sizeof fix, "install a plugin that provides \"%s\", or get it and carry on without it",
-             want->slot->id);
+    char *detail = weivel_text_format("waited %" PRId64 "ms for service \"%s\" and nothing registered it",
+                                      want->timeout_millis, want->slot->id);
+    char *fix =
+        weivel_text_format("install a plugin that provides \"%s\", or get it and carry on without it", want->slot->id);
     weivel_waiting_reject(core, want, WEIVEL_REFUSAL_TIMED_OUT, detail, fix);
+    free(fix);
+    free(detail);
 }
 
 void weivel_waiting_due(weivel_core *core, weivel_handle subject, int64_t now) {
@@ -134,14 +135,17 @@ static weivel_status enqueue(weivel_core *core, weivel_want *want, const weivel_
 }
 
 static weivel_status refuse_unpolled(weivel_core *core, const char *id) {
-    char detail[512];
-    snprintf(detail, sizeof detail,
-             "weivel_want_service asked for service \"%s\", which the manifest constrains, without a poll interval",
-             id);
-    return weivel_core_refuse_malformed(
+    char *detail = weivel_text_format(
+        "weivel_want_service asked for service \"%s\", which the manifest constrains, without a poll interval", id);
+    if (detail == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    weivel_status status = weivel_core_refuse_malformed(
         core, detail,
         "give weivel_want_options a poll_millis of 1 or more; a budget is optional, and without one the want polls "
         "until a provider meets its constraints");
+    free(detail);
+    return status;
 }
 
 static weivel_status decide(weivel_core *core, weivel_want *want, const char *id, const weivel_reach *reach,
@@ -196,13 +200,14 @@ static weivel_status want_service(weivel_core *core, weivel_handle consumer, con
     want->provider = reach.provider;
     weivel_handle answered = want->handle;
     status = decide(core, want, id, &reach, options);
+    bool consumed = reach.code == WEIVEL_REFUSAL_NONE && !reach.late;
     weivel_reach_dispose(&reach);
     if (status != WEIVEL_STATUS_OK) {
         weivel_waiting_withdraw(core, want);
         return status;
     }
     *handle = answered;
-    if (reach.code == WEIVEL_REFUSAL_NONE && !reach.late) {
+    if (consumed) {
         weivel_ledger_note(core, plugin, WEIVEL_RELATIONSHIP_SERVICE_CONSUMED, id);
     }
     return WEIVEL_STATUS_OK;
