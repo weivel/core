@@ -5,14 +5,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "manifest.h"
 #include "sized.h"
 
-static weivel_status refuse_malformed(weivel_core *core, const char *detail, const char *fix) {
+weivel_status weivel_core_refuse_malformed(weivel_core *core, const char *detail, const char *fix) {
     weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_MALFORMED_CALL, detail, fix);
     return WEIVEL_STATUS_MALFORMED;
 }
 
-static void report_pending(const weivel_core *core, uint32_t *pending_events) {
+void weivel_core_report_pending(const weivel_core *core, uint32_t *pending_events) {
     if (pending_events != NULL) {
         *pending_events = weivel_events_pending(core->events);
     }
@@ -38,6 +39,8 @@ static weivel_core_options resolve_options(const weivel_core_options *options) {
 }
 
 static void free_core(weivel_core *core) {
+    weivel_plugins_destroy(core->plugins);
+    free(core->host_storage);
     weivel_deadlines_destroy(core->deadlines);
     weivel_handles_destroy(core->handles);
     weivel_events_destroy(core->events);
@@ -55,7 +58,12 @@ static weivel_core *allocate_core(const weivel_core_options *options) {
     core->events = weivel_events_create(options->initial_event_capacity);
     core->handles = weivel_handles_create();
     core->deadlines = weivel_deadlines_create();
-    if (core->mutex == NULL || core->events == NULL || core->handles == NULL || core->deadlines == NULL) {
+    core->plugins = weivel_plugins_create();
+    core->host.api = options->api;
+    bool host_copied = weivel_strings_copy(&options->applications, &core->host.applications, &core->host_storage);
+    core->options.applications = core->host.applications;
+    if (!host_copied || core->mutex == NULL || core->events == NULL || core->handles == NULL ||
+        core->deadlines == NULL || core->plugins == NULL) {
         free_core(core);
         return NULL;
     }
@@ -71,7 +79,8 @@ weivel_status weivel_core_create(const weivel_core_options *options, weivel_core
         return WEIVEL_STATUS_MALFORMED;
     }
     weivel_core_options resolved = resolve_options(options);
-    if (resolved.initial_event_capacity > WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY) {
+    if (resolved.initial_event_capacity > WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY ||
+        !weivel_strings_readable(&resolved.applications)) {
         return WEIVEL_STATUS_MALFORMED;
     }
     weivel_core *created = allocate_core(&resolved);
@@ -79,7 +88,7 @@ weivel_status weivel_core_create(const weivel_core_options *options, weivel_core
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
     weivel_core_log(created, WEIVEL_LOG_DEBUG, "core created");
-    report_pending(created, pending_events);
+    weivel_core_report_pending(created, pending_events);
     *core = created;
     return WEIVEL_STATUS_OK;
 }
@@ -109,17 +118,18 @@ weivel_status weivel_next_event(weivel_core *core, weivel_event *event, uint32_t
     weivel_mutex_lock(core->mutex);
     weivel_status status;
     if (!is_sized_event(event)) {
-        status = refuse_malformed(core, "weivel_next_event was given no event struct, or one whose size is too small",
-                                  "pass a weivel_event initialised with WEIVEL_INIT(weivel_event)");
+        status = weivel_core_refuse_malformed(
+            core, "weivel_next_event was given no event struct, or one whose size is too small",
+            "pass a weivel_event initialised with WEIVEL_INIT(weivel_event)");
     } else if (event->kind != WEIVEL_EVENT_NONE) {
-        status = refuse_malformed(core, "weivel_next_event was given an event still holding one",
-                                  "pass the held event to weivel_event_release first");
+        status = weivel_core_refuse_malformed(core, "weivel_next_event was given an event still holding one",
+                                              "pass the held event to weivel_event_release first");
     } else {
         weivel_event taken = no_event();
         status = weivel_events_pop(core->events, &taken) ? WEIVEL_STATUS_OK : WEIVEL_STATUS_NONE;
         weivel_sized_write(event, &taken, sizeof taken);
     }
-    report_pending(core, pending_events);
+    weivel_core_report_pending(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
@@ -148,12 +158,12 @@ weivel_status weivel_next_deadline(weivel_core *core, int64_t *deadline, uint32_
     weivel_mutex_lock(core->mutex);
     weivel_status status;
     if (deadline == NULL) {
-        status = refuse_malformed(core, "weivel_next_deadline was given no place to write the deadline",
-                                  "pass a pointer to an int64_t");
+        status = weivel_core_refuse_malformed(core, "weivel_next_deadline was given no place to write the deadline",
+                                              "pass a pointer to an int64_t");
     } else {
         status = weivel_deadlines_earliest(core->deadlines, deadline) ? WEIVEL_STATUS_OK : WEIVEL_STATUS_NONE;
     }
-    report_pending(core, pending_events);
+    weivel_core_report_pending(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
@@ -177,7 +187,7 @@ weivel_status weivel_advance(weivel_core *core, int64_t now, uint32_t *pending_e
     if (settled > 0) {
         log_settled(core, settled, now);
     }
-    report_pending(core, pending_events);
+    weivel_core_report_pending(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return WEIVEL_STATUS_OK;
 }

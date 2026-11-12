@@ -22,12 +22,16 @@ function(weivel_strict_warnings target)
 endfunction()
 
 set(WEIVEL_CORE_SOURCES
+    src/compatibility.c
     src/core.c
     src/deadlines.c
     src/events.c
     src/handles.c
+    src/manifest.c
     src/mutex.c
-    src/sized.c)
+    src/plugins.c
+    src/sized.c
+    src/supports.c)
 
 function(weivel_core_target target)
     target_include_directories(${target} PUBLIC include)
