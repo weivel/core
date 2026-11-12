@@ -1,4 +1,5 @@
 #include "mutex.h"
+#include "memory.h"
 
 #include <stdlib.h>
 
@@ -12,7 +13,7 @@ struct weivel_mutex {
 };
 
 weivel_mutex *weivel_mutex_create(void) {
-    weivel_mutex *mutex = malloc(sizeof *mutex);
+    weivel_mutex *mutex = weivel_memory_allocate(sizeof *mutex);
     if (mutex != NULL) {
         InitializeSRWLock(&mutex->lock);
     }
@@ -40,7 +41,7 @@ struct weivel_mutex {
 };
 
 weivel_mutex *weivel_mutex_create(void) {
-    weivel_mutex *mutex = malloc(sizeof *mutex);
+    weivel_mutex *mutex = weivel_memory_allocate(sizeof *mutex);
     if (mutex != NULL && pthread_mutex_init(&mutex->lock, NULL) != 0) {
         free(mutex);
         return NULL;

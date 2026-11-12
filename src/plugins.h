@@ -30,6 +30,8 @@ typedef struct weivel_declaration {
 /** One reported refusal of reach, the shape the ledger exposes; `sequence` orders reports across plugins. */
 typedef struct weivel_reach_record {
     uint32_t kind;
+    /** WEIVEL_REFUSAL_UNDECLARED or WEIVEL_REFUSAL_WRONG_PROVIDER. */
+    uint32_t code;
     weivel_handle plugin;
     char *id;
     uint64_t sequence;
@@ -46,6 +48,10 @@ typedef struct weivel_plugin {
     /** Where the plugin sits in the collection, so forgetting it takes no search. */
     uint32_t index;
     uint32_t state;
+    /** Whether it was ever opened since it was registered; a plugin never opened is fenced from the registry. */
+    bool opened;
+    /** Whether this is the core's own record for WEIVEL_HOST, which no collection holds and nothing fences. */
+    bool is_host;
     /** The manifest's identity, never NULL. */
     const char *identity;
     uint64_t payload;
@@ -81,6 +87,7 @@ typedef struct weivel_plugin {
     weivel_ids services_provided;
     weivel_ids capabilities_provided;
     weivel_ids services_consumed;
+    weivel_ids capabilities_consumed;
     bool verified;
     /** The refusal verification last answered its activation since it was opened. */
     weivel_kept_refusal activation_refusal;
@@ -104,6 +111,9 @@ weivel_plugin *weivel_plugins_with_identity(const weivel_plugins *plugins, const
 
 /** How many plugin records the collection holds, released ones included until they are forgotten. */
 uint32_t weivel_plugins_count(const weivel_plugins *plugins);
+
+/** Makes the core's own record for WEIVEL_HOST: open, never late, holding nothing yet. */
+void weivel_plugins_init_host(weivel_plugin *host);
 
 /** The head of the list of every plugin record, chained by `in_order` in the order they were registered. */
 const weivel_link *weivel_plugins_in_order(const weivel_plugins *plugins);

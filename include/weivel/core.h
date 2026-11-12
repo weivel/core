@@ -15,11 +15,18 @@
  *   covered by the outer struct's size and carries none of its own.
  * - Status. Every call returns a weivel_status. A malformed call (a null core, a null required pointer, a size too
  *   small) answers WEIVEL_STATUS_MALFORMED and never crashes or aborts; when it has a core, it also queues a
- *   WEIVEL_EVENT_REFUSAL saying what was wrong.
+ *   WEIVEL_EVENT_REFUSAL saying what was wrong. A call whose refusal, of either kind, cannot be queued answers
+ *   WEIVEL_STATUS_OUT_OF_MEMORY instead, so a refusal is never answered without its event.
  * - Handles. Anything the core tracks is a weivel_handle: 32 bits of slot and 32 bits of generation, never 0, valid
  *   only for the core that issued it. A handle whose object is gone is refused, never mistaken for a newer one.
  * - Events. The core never calls out. Every change lands in a queue the caller drains with weivel_next_event after
- *   the call returns; every call that can queue an event reports how many wait.
+ *   the call returns; every call that can queue an event reports how many wait. An event the core owes is reserved
+ *   the moment the obligation arises: a want's settlement when the want is made, a holding's revocation when the
+ *   holding is recorded, and a watch's notification before the change that causes it. A call that cannot reserve
+ *   everything it will owe answers WEIVEL_STATUS_OUT_OF_MEMORY and changes nothing, and a reserved event is always
+ *   delivered, so no want settles unheard and no holder misses a revocation. A log is the one event the core may
+ *   drop when memory runs out; a rejected want whose refusal texts cannot be copied carries a fixed sentence in
+ *   their place, its code always exact.
  * - Strings. Strings handed in are copied before the call returns. Strings handed out are UTF-8, NUL-terminated,
  *   and belong to the struct that carries them until its release call.
  * - Time. The core owns no clock. Every timestamp is a caller-supplied int64_t count of milliseconds on a
@@ -982,18 +989,19 @@ typedef struct weivel_capacity {
  *
  * An answer counts only for the question it names, while that question is open: from its event until its poll or
  * question ends, and a `now` at or after that end means it has. An answer to an earlier poll, to a question already
- * answered, for a registration that has since gone, or for a want that is not constrained counts for nothing.
+ * answered, for a registration that has since gone, for a want that has settled, or for a want that is not
+ * constrained counts for nothing.
+ *
+ * A yes is acted on only once the consumer's holding of the service is recorded. When memory for it runs out the
+ * call answers WEIVEL_STATUS_OUT_OF_MEMORY, nothing changes, and the question stays open to be answered again.
  *
  * @param want the want the event named.
  * @param registration the registration the event named.
  * @param capacity the answer. Required; read only during the call.
  * @param now the caller's time now.
- * A yes is acted on only once the consumer's holding of the service is recorded. When memory for it runs out the
- * call answers WEIVEL_STATUS_OUT_OF_MEMORY, nothing changes, and the question stays open to be answered again.
- *
- * @return WEIVEL_STATUS_OK when the answer counted; WEIVEL_STATUS_NONE when it answers no open question, queuing
- * nothing; WEIVEL_STATUS_REFUSED for a want handle that names no want (WEIVEL_REFUSAL_STALE_HANDLE), queuing a
- * refusal; WEIVEL_STATUS_MALFORMED for a NULL core or capacity, a capacity below its first shape or attributes that
+ * @return WEIVEL_STATUS_OK when the answer counted; WEIVEL_STATUS_NONE when it answers no open question, a want
+ * already settled or withdrawn included, as for a registration that has gone, queuing nothing;
+ * WEIVEL_STATUS_MALFORMED for a NULL core or capacity, a capacity below its first shape or attributes that
  * cannot be read or name one twice, queuing a refusal when the core is given; WEIVEL_STATUS_OUT_OF_MEMORY.
  * Threading: any thread.
  */
@@ -1085,7 +1093,8 @@ WEIVEL_API weivel_status weivel_provide_capability(weivel_core *core, weivel_han
  * after a passing verify is answered OK with a handle that never joins: it is undeclared, so the next verify refuses
  * the plugin.
  *
- * When it does not pass, nothing joins, and the caller quarantines the plugin.
+ * When it does not pass, nothing joins, and the caller quarantines the plugin. Every holding and notification a pass
+ * owes is reserved before anything joins, so a pass that runs out of memory changes nothing.
  *
  * @return WEIVEL_STATUS_OK when it passes; WEIVEL_STATUS_REFUSED when the plugin provided less or more than it
  * declares (WEIVEL_REFUSAL_ACTIVATION_MISMATCH), for a stale plugin, or for one not open
@@ -1122,8 +1131,9 @@ typedef struct weivel_capability_list {
  * answered an empty list and refused (WEIVEL_REFUSAL_UNDECLARED), reported as a WEIVEL_EVENT_REACH_REFUSED of kind
  * WEIVEL_REACH_CAPABILITY once per plugin and id. Then a plugin no longer running is let through.
  *
- * The holder rule is the services' rule (weivel_unregister): a plugin holds each implementation this call hands it,
- * once however often it asks, until the implementation is withdrawn or the plugin is released or quarantined. A
+ * The holder rule is the services' rule (weivel_unregister): a plugin holds each implementation this call or a
+ * capability watch hearing it provided hands it, once however often, until the implementation is withdrawn or the
+ * plugin is released or quarantined. A
  * withdrawal, when its provider is quarantined, released or forgotten, revokes it to every holder by one
  * WEIVEL_EVENT_REVOKED each, before any watch hears it withdrawn; a plugin that holds and watches gets both. A
  * plugin released or quarantined has what it holds revoked to it in the same call, and a released plugin's late
@@ -1151,9 +1161,10 @@ WEIVEL_API weivel_status weivel_capability_list_release(weivel_capability_list *
 
 /**
  * Watches `id`: each later change to its verified implementations is a WEIVEL_EVENT_CAPABILITY, and nothing from
- * before the watch is replayed. The watch lasts until weivel_unregister, or until the plugin is released or
- * quarantined, which first withdraws what the plugin itself provided, so a plugin watching its own capability hears
- * its own implementation leave.
+ * before the watch is replayed. Hearing an implementation provided hands it over, so the plugin holds it, as
+ * weivel_capability_all's holder rule says, and is revoked it before the watch hears it withdrawn. The watch lasts
+ * until weivel_unregister, or until the plugin is released or quarantined, which first withdraws what the plugin
+ * itself provided, so a plugin watching its own capability hears its own implementation leave.
  *
  * Reach is checked as weivel_capability_all checks it, and a refused watch is inert. A late watch, from a plugin no
  * longer running, is inert and logged only, never reported.
@@ -1215,17 +1226,25 @@ typedef struct weivel_ledger_row {
     weivel_strings capabilities_provided;
     weivel_strings services_consumed;
     void *storage;
+    /**
+     * Each capability id it asked for by an `all` or a watch its reach allowed, answered or not, as
+     * `services_consumed` is for services. Appended after `storage`.
+     */
+    weivel_strings capabilities_consumed;
 } weivel_ledger_row;
 
 /**
- * A refusal of reach reported for a plugin: it reached for the `kind` (a weivel_reach_kind) named `id` without
- * declaring it.
+ * A refusal of reach reported for a plugin: it reached for the `kind` (a weivel_reach_kind) named `id`, and `code`
+ * says why: WEIVEL_REFUSAL_UNDECLARED when it does not declare it, WEIVEL_REFUSAL_WRONG_PROVIDER when it binds a
+ * service to one provider and another owner holds it.
  */
 typedef struct weivel_declaration_refusal {
     uint32_t size;
     uint32_t kind;
     weivel_handle plugin;
     const char *id;
+    /** A weivel_refusal_code. Appended after `id`. */
+    uint32_t code;
 } weivel_declaration_refusal;
 
 /**

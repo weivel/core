@@ -1,4 +1,5 @@
 #include "handles.h"
+#include "memory.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -34,7 +35,7 @@ static weivel_handle handle_for(uint32_t slot, uint32_t generation) {
 }
 
 weivel_handles *weivel_handles_create(void) {
-    weivel_handles *handles = calloc(1, sizeof *handles);
+    weivel_handles *handles = weivel_memory_allocate_zeroed(1, sizeof *handles);
     if (handles != NULL) {
         handles->first_free = NO_FREE_SLOT;
     }
@@ -57,7 +58,7 @@ static bool grow(weivel_handles *handles) {
         return false;
     }
     uint32_t capacity = handles->capacity == 0 ? 16 : handles->capacity * 2;
-    handle_slot *slots = realloc(handles->slots, (size_t)capacity * sizeof *slots);
+    handle_slot *slots = weivel_memory_reallocate(handles->slots, (size_t)capacity * sizeof *slots);
     if (slots == NULL) {
         return false;
     }
@@ -136,6 +137,23 @@ weivel_status weivel_handles_release(weivel_handles *handles, weivel_handle hand
         handles->first_free = slot_of(handle);
     }
     return WEIVEL_STATUS_OK;
+}
+
+void weivel_handles_unissue(weivel_handles *handles, weivel_handle handle, uint32_t kind) {
+    handle_slot *entry = live_slot(handles, handle, kind);
+    if (entry == NULL) {
+        return;
+    }
+    uint32_t slot = slot_of(handle);
+    entry->occupied = false;
+    entry->record = NULL;
+    handles->live--;
+    if (entry->generation == 1 && slot == handles->count - 1) {
+        handles->count--;
+        return;
+    }
+    entry->next_free = handles->first_free;
+    handles->first_free = slot;
 }
 
 weivel_handle weivel_handles_set_generation(weivel_handles *handles, weivel_handle handle, uint32_t kind,

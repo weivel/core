@@ -32,6 +32,12 @@ struct weivel_core {
     void *well_known_storage;
     /** The constraint vocabulary the options gave, copied. */
     weivel_vocabulary vocabulary;
+    /** The record WEIVEL_HOST asks with: never fenced, never late, and in no collection, so in no ledger row. */
+    weivel_plugin host_plugin;
+    /** Notifications the call now running reserved and has not delivered; given back when it ends. */
+    uint32_t notices;
+    /** Logs that memory could not hold: a log is the one event the core may drop. */
+    uint64_t dropped_logs;
 };
 
 /** The kind of record each handle names. */
@@ -61,11 +67,29 @@ typedef enum weivel_record_kind {
 /** Queues a log event when `level` reaches the core's minimum. Called with the core's mutex held. */
 void weivel_core_log(weivel_core *core, uint32_t level, const char *text);
 
-/** Queues a malformed-call refusal and answers WEIVEL_STATUS_MALFORMED. Called with the core's mutex held. */
+/**
+ * Queues a malformed-call refusal and answers WEIVEL_STATUS_MALFORMED, or WEIVEL_STATUS_OUT_OF_MEMORY when the
+ * refusal could not be queued. Called with the core's mutex held.
+ */
 weivel_status weivel_core_refuse_malformed(weivel_core *core, const char *detail, const char *fix);
 
-/** Writes how many events wait into `pending_events` when it is given. Called with the core's mutex held. */
-void weivel_core_report_pending(const weivel_core *core, uint32_t *pending_events);
+/**
+ * Ends a public call: gives back whatever the call reserved and did not use, then writes how many events wait into
+ * `pending_events` when it is given. Every public call taking a core ends here, with the core's mutex held.
+ */
+void weivel_core_end_call(weivel_core *core, uint32_t *pending_events);
+
+/**
+ * Reserves `count` notifications, the watch and capability events a change the call is about to make will owe, so
+ * delivering them cannot fail. On WEIVEL_STATUS_OUT_OF_MEMORY the call must change nothing.
+ */
+weivel_status weivel_core_reserve_notices(weivel_core *core, uint32_t count);
+
+/** Delivers a watch's notification from the call's reservation. */
+void weivel_core_notify_watch(weivel_core *core, const weivel_watch_event *heard);
+
+/** Delivers a capability watch's notification from the call's reservation. */
+void weivel_core_notify_capability(weivel_core *core, const weivel_capability_event *heard);
 
 /**
  * Resolves a plugin handle, refusing a stale one with a WEIVEL_REFUSAL_STALE_HANDLE event. Called with the core's
@@ -79,6 +103,14 @@ weivel_status weivel_core_plugin(weivel_core *core, weivel_handle handle, weivel
  */
 weivel_status weivel_core_opened_plugin(weivel_core *core, weivel_handle handle, weivel_plugin **plugin);
 
+/**
+ * Resolves the asker of a get, want, watch, capability all or capability watch: WEIVEL_HOST is the core's own host
+ * record, any other handle a plugin as weivel_core_opened_plugin resolves it. Called with the core's mutex held.
+ */
+weivel_status weivel_core_asking_plugin(weivel_core *core, weivel_handle handle, weivel_plugin **plugin);
+
+#ifdef WEIVEL_TESTING
+
 /** How many records a core holds now, so a test can show churn leaves nothing behind. */
 typedef struct weivel_census {
     uint32_t plugins;
@@ -91,9 +123,15 @@ typedef struct weivel_census {
     uint32_t provisions;
     uint32_t capability_watches;
     uint32_t capability_holdings;
+    uint32_t wants;
+    uint32_t watches;
+    /** Events reserved and not yet delivered: between calls, exactly one per want, holding and capability holding. */
+    uint32_t reserved_events;
 } weivel_census;
 
 /** Counts a core's records. Takes the core's mutex. */
 void weivel_core_census(weivel_core *core, weivel_census *census);
+
+#endif
 
 #endif

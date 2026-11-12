@@ -4,6 +4,7 @@
 #include <weivel/core.h>
 
 #include "core_internal.h"
+#include "memory.h"
 #include "registry_support.h"
 
 typedef enum step_kind { END, PROVIDE, VERIFY, ALL, WATCH, QUARANTINE, RELEASE } step_kind;
@@ -797,6 +798,26 @@ static void a_holder_is_revoked_once_when_its_provider_is_quarantined(void) {
 }
 
 /** A plugin that holds and watches hears the revocation first, then the watch's withdrawal, each once. */
+/** A watch that hears an implementation provided hands it over, so a plugin that only watches is revoked it too. */
+static void a_watch_only_consumer_is_revoked_what_it_heard(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    weivel_handle agenda = open_capabilities(core, "agenda", NONE, SCREENS);
+    weivel_handle calendar = open_capabilities(core, "calendar", SCREENS, NONE);
+    weivel_handle watch = watch_capability(core, agenda, "screens");
+    weivel_handle implementation = provide(core, calendar, "screens");
+    CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    CHECK(holdings_now(core) == 1);
+    forget(core);
+    CHECK(weivel_release_plugin(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(the_journal.count == 2);
+    CHECK(the_journal.items[0].kind == WEIVEL_EVENT_REVOKED && revocations_to(agenda, implementation) == 1);
+    CHECK(the_journal.items[1].kind == WEIVEL_EVENT_CAPABILITY);
+    CHECK(capability_events(watch, WEIVEL_CAPABILITY_WITHDRAWN) == 1);
+    CHECK(holdings_now(core) == 0);
+    weivel_core_destroy(core);
+}
+
 static void a_holder_that_watches_hears_both_when_its_provider_is_released(void) {
     weivel_core *core = core_knowing(NULL, 0);
     weivel_handle agenda = open_capabilities(core, "agenda", NONE, SCREENS);
@@ -847,14 +868,14 @@ static void a_released_holder_hears_nothing_later(void) {
     weivel_core_destroy(core);
 }
 
-/** A holding the core cannot record hands nothing over, so no revocation is ever owed for it. */
-static void an_all_that_cannot_record_its_holding_hands_nothing_over(void) {
+/** An `all` that runs out of memory hands nothing over, so no revocation is ever owed for it. */
+static void an_all_that_runs_out_of_memory_hands_nothing_over(void) {
     weivel_core *core = core_knowing(NULL, 0);
     weivel_handle agenda = open_capabilities(core, "agenda", NONE, SCREENS);
     weivel_handle calendar = open_capabilities(core, "calendar", SCREENS, NONE);
     provide(core, calendar, "screens");
     CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_OK);
-    core->registry->fail_next_holding = true;
+    weivel_memory_fail_at(1);
     weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
     CHECK(weivel_capability_all(core, agenda, "screens", &list, NULL) == WEIVEL_STATUS_OUT_OF_MEMORY);
     CHECK(list.count == 0 && list.storage == NULL);
@@ -974,9 +995,10 @@ int main(void) {
     a_service_and_a_capability_of_one_id_are_reported_apart();
     malformed_and_refused_calls_are_values();
     a_holder_is_revoked_once_when_its_provider_is_quarantined();
+    a_watch_only_consumer_is_revoked_what_it_heard();
     a_holder_that_watches_hears_both_when_its_provider_is_released();
     a_released_holder_hears_nothing_later();
-    an_all_that_cannot_record_its_holding_hands_nothing_over();
+    an_all_that_runs_out_of_memory_hands_nothing_over();
     churn_leaves_no_capability_behind();
     many_providers_keep_verify_order();
     return check_summary("capabilities_test");

@@ -32,7 +32,10 @@ share nothing. Creating and destroying a core are the only calls that must not o
 Every change the core makes lands in one queue, in the order it happened: a want settled, a watch heard, a service or
 capability revoked, a refusal reported, a capacity question asked, and every diagnostic as a log event with its
 level. Each call reports how many events wait, and the caller drains them after the call returns, outside the core.
-The queue grows as needed, so no event is dropped for want of room.
+Every event the core owes is reserved when the obligation arises: a want's settlement when the want is made, a
+holding's revocation when the holding is recorded, a watch's notification before the change that causes it. A call
+that cannot reserve what it will owe answers out of memory and changes nothing, so a want never vanishes unsettled
+and a holder never misses a revocation. A log is the one event the core may drop when memory runs out.
 
 Time is the caller's. Every timestamp is a count of milliseconds on a monotonic scale the caller chooses. The core
 answers its next deadline; the caller arms its own timer for it and tells the core the time when the timer fires.

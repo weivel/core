@@ -29,6 +29,13 @@ uint32_t weivel_handles_slots(const weivel_handles *handles);
 weivel_status weivel_handles_release(weivel_handles *handles, weivel_handle handle, uint32_t kind);
 
 /**
+ * Takes back a handle issued by the call now running and never handed out, as though it had never been issued: the
+ * slot keeps its generation and returns to the head of the free list, or, when the issue made it, is unmade. A call
+ * undoing a change takes its handles back newest first, so the table ends exactly as it began.
+ */
+void weivel_handles_unissue(weivel_handles *handles, weivel_handle handle, uint32_t kind);
+
+/**
  * Moves a live handle's slot to `generation` and answers the handle that now names it, or 0 when `handle` is not
  * live. @implNote Exists so a test can reach a slot's last generation without four billion releases.
  */

@@ -1,4 +1,5 @@
 #include "core_internal.h"
+#include "memory.h"
 #include "registry_support.h"
 
 /** A plugin as the ledger tests need one: services, capabilities and permissions, each list NULL-terminated. */
@@ -538,14 +539,17 @@ static void the_core_logs_at_every_level(void) {
     weivel_handle watch = 0;
     CHECK(weivel_watch_service(core, consumer, "calendar:events", &watch, NULL) == WEIVEL_STATUS_REFUSED);
     next_log(core, WEIVEL_LOG_WARNING, "ignored a late watch of service \"calendar:events\"");
+    weivel_memory_fail_at(1);
+    CHECK(weivel_watch_service(core, consumer, "calendar:events", &watch, NULL) == WEIVEL_STATUS_REFUSED);
+    next_log(core, WEIVEL_LOG_ERROR, "memory ran out describing a late call, which was ignored");
     CHECK(weivel_open_plugin(core, consumer, NULL, NULL) == WEIVEL_STATUS_OK);
     weivel_handle want = 0;
     CHECK(weivel_want_service(core, consumer, "calendar:events", NULL, &want, NULL) == WEIVEL_STATUS_OK);
-    core->registry->fail_next_holding = true;
     weivel_handle registration = 0;
     CHECK(weivel_register_service(core, provider, "calendar:events", &registration, NULL) == WEIVEL_STATUS_OK);
-    next_log(core, WEIVEL_LOG_ERROR, "memory ran out settling a want, so it still waits");
     weivel_event event = WEIVEL_INIT(weivel_event);
+    CHECK(weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_OK && event.kind == WEIVEL_EVENT_WANT_SETTLED);
+    weivel_event_release(&event);
     CHECK(weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_NONE);
     weivel_core_destroy(core);
 }

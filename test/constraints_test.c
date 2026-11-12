@@ -4,6 +4,7 @@
 #include <weivel/core.h>
 
 #include "core_internal.h"
+#include "memory.h"
 #include "registry_support.h"
 
 #define SERVICE "storage.object"
@@ -761,7 +762,7 @@ static seen degrade_question(scene *made) {
 static void a_yes_that_cannot_be_held_leaves_the_question_open(void) {
     scene made = scene_of(true, 1);
     seen asked = degrade_question(&made);
-    made.core->registry->fail_next_holding = true;
+    weivel_memory_fail_at(1);
     CHECK(report_serves(made.core, &asked, true, 3000) == WEIVEL_STATUS_OUT_OF_MEMORY);
     drain(made.core);
     CHECK(settlement_of(made.want) == NULL);
@@ -780,9 +781,9 @@ static void a_yes_that_cannot_be_held_leaves_the_question_open(void) {
 static void two_failed_holdings_lose_no_yes(void) {
     scene made = scene_of(true, 1);
     seen asked = degrade_question(&made);
-    made.core->registry->fail_next_holding = true;
+    weivel_memory_fail_at(1);
     CHECK(report_serves(made.core, &asked, true, 3000) == WEIVEL_STATUS_OUT_OF_MEMORY);
-    made.core->registry->fail_next_holding = true;
+    weivel_memory_fail_at(1);
     CHECK(report_serves(made.core, &asked, true, 3001) == WEIVEL_STATUS_OUT_OF_MEMORY);
     drain(made.core);
     CHECK(settlement_of(made.want) == NULL && degraded_reports() == 0);
@@ -800,7 +801,7 @@ static void a_poll_yes_that_cannot_be_held_leaves_the_question_open(void) {
     CHECK(report_attributes(made.core, latest_question(), &three_replicas, 0) == WEIVEL_STATUS_OK);
     drain(made.core);
     seen asked = *latest_question();
-    made.core->registry->fail_next_holding = true;
+    weivel_memory_fail_at(1);
     CHECK(report_serves(made.core, &asked, true, 0) == WEIVEL_STATUS_OUT_OF_MEMORY);
     drain(made.core);
     CHECK(settlement_of(made.want) == NULL);
@@ -938,9 +939,10 @@ static void withdrawing_a_polling_want_ends_it_quietly(void) {
     CHECK(settlement_of(made.want) == NULL);
     int64_t left;
     CHECK(weivel_next_deadline(made.core, &left, NULL) == WEIVEL_STATUS_NONE);
-    CHECK(report_attributes(made.core, &asked, &three_replicas, 0) == WEIVEL_STATUS_REFUSED);
+    forget(made.core);
+    CHECK(report_attributes(made.core, &asked, &three_replicas, 0) == WEIVEL_STATUS_NONE);
     drain(made.core);
-    CHECK(nth_of(WEIVEL_EVENT_REFUSAL, 0)->code == WEIVEL_REFUSAL_STALE_HANDLE);
+    CHECK(the_journal.count == 0);
     weivel_core_destroy(made.core);
 }
 

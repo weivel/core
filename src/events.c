@@ -1,4 +1,5 @@
 #include "events.h"
+#include "memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -10,15 +11,17 @@ struct weivel_events {
     uint32_t capacity;
     uint32_t first;
     uint32_t count;
+    /** Events owed and not yet delivered; `capacity` always covers `count` plus these. */
+    uint32_t reserved;
 };
 
 weivel_events *weivel_events_create(uint32_t initial_capacity) {
-    weivel_events *events = calloc(1, sizeof *events);
+    weivel_events *events = weivel_memory_allocate_zeroed(1, sizeof *events);
     if (events == NULL) {
         return NULL;
     }
     events->capacity = initial_capacity == 0 ? DEFAULT_CAPACITY : initial_capacity;
-    events->ring = calloc(events->capacity, sizeof *events->ring);
+    events->ring = weivel_memory_allocate_zeroed(events->capacity, sizeof *events->ring);
     if (events->ring == NULL) {
         free(events);
         return NULL;
@@ -42,12 +45,19 @@ uint32_t weivel_events_pending(const weivel_events *events) {
     return events->count;
 }
 
-static bool grow(weivel_events *events) {
-    if (events->capacity > UINT32_MAX / 2) {
+/** Grows the ring by doubling until it holds `needed` events; false, with nothing changed, when it cannot. */
+static bool grow_to(weivel_events *events, uint64_t needed) {
+    uint64_t capacity = events->capacity;
+    while (capacity < needed) {
+        capacity *= 2;
+    }
+    if (capacity == events->capacity) {
+        return true;
+    }
+    if (capacity > UINT32_MAX) {
         return false;
     }
-    uint32_t capacity = events->capacity * 2;
-    weivel_event *ring = malloc((size_t)capacity * sizeof *ring);
+    weivel_event *ring = weivel_memory_allocate((size_t)capacity * sizeof *ring);
     if (ring == NULL) {
         return false;
     }
@@ -56,21 +66,54 @@ static bool grow(weivel_events *events) {
     }
     free(events->ring);
     events->ring = ring;
-    events->capacity = capacity;
+    events->capacity = (uint32_t)capacity;
     events->first = 0;
     return true;
 }
 
-weivel_status weivel_events_push(weivel_events *events, const weivel_event *event) {
-    if (events->count == events->capacity && !grow(events)) {
-        free(event->storage);
+weivel_status weivel_events_reserve(weivel_events *events, uint32_t count) {
+    if (!grow_to(events, (uint64_t)events->count + events->reserved + count)) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
+    events->reserved += count;
+    return WEIVEL_STATUS_OK;
+}
+
+void weivel_events_unreserve(weivel_events *events, uint32_t count) {
+    events->reserved -= count;
+}
+
+uint32_t weivel_events_reserved(const weivel_events *events) {
+    return events->reserved;
+}
+
+static void place(weivel_events *events, const weivel_event *event) {
     weivel_event *slot = &events->ring[(events->first + events->count) % events->capacity];
     *slot = *event;
     slot->size = (uint32_t)sizeof *slot;
     events->count++;
+}
+
+/** Queues an unreserved event, taking its `storage`; on failure the storage is freed, so the caller never frees it. */
+static weivel_status push(weivel_events *events, const weivel_event *event) {
+    if (!grow_to(events, (uint64_t)events->count + events->reserved + 1)) {
+        free(event->storage);
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    place(events, event);
     return WEIVEL_STATUS_OK;
+}
+
+static void deliver(weivel_events *events, const weivel_event *event) {
+    events->reserved--;
+    place(events, event);
+}
+
+void weivel_events_drop_newest(weivel_events *events) {
+    events->count--;
+    weivel_event *newest = &events->ring[(events->first + events->count) % events->capacity];
+    free(newest->storage);
+    memset(newest, 0, sizeof *newest);
 }
 
 bool weivel_events_pop(weivel_events *events, weivel_event *event) {
@@ -88,7 +131,7 @@ void *weivel_events_copy_texts(size_t count, const char *const *texts, const cha
     for (size_t index = 0; index < count; index++) {
         total += (texts[index] == NULL ? 0 : strlen(texts[index])) + 1;
     }
-    char *storage = malloc(total == 0 ? 1 : total);
+    char *storage = weivel_memory_allocate(total == 0 ? 1 : total);
     if (storage == NULL) {
         return NULL;
     }
@@ -120,7 +163,7 @@ weivel_status weivel_events_push_log(weivel_events *events, uint32_t level, cons
     if (event.storage == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    return weivel_events_push(events, &event);
+    return push(events, &event);
 }
 
 weivel_status weivel_events_push_refusal(weivel_events *events, uint32_t code, const char *detail, const char *fix) {
@@ -134,49 +177,54 @@ weivel_status weivel_events_push_refusal(weivel_events *events, uint32_t code, c
     }
     event.data.refusal.detail = copies[0];
     event.data.refusal.fix = copies[1];
-    return weivel_events_push(events, &event);
+    return push(events, &event);
 }
 
-weivel_status weivel_events_push_want(weivel_events *events, const weivel_want_event *settled, const char *detail,
-                                      const char *fix) {
+/**
+ * What a rejected want carries when memory runs out copying its refusal's texts.
+ * @implNote Static, so `storage` stays NULL and the release frees nothing it did not allocate.
+ */
+static const char *const rejected_without_detail = "memory ran out describing why this want was rejected";
+static const char *const rejected_without_fix = "read the refusal code, which is exact";
+
+void weivel_events_deliver_want(weivel_events *events, const weivel_want_event *settled, const char *detail,
+                                const char *fix) {
     weivel_event event = empty_event(WEIVEL_EVENT_WANT_SETTLED);
     event.data.want = *settled;
     event.data.want.refusal.detail = NULL;
     event.data.want.refusal.fix = NULL;
     if (settled->implementation != 0) {
         event.data.want.refusal.code = WEIVEL_REFUSAL_NONE;
-        return weivel_events_push(events, &event);
+        deliver(events, &event);
+        return;
     }
     const char *texts[2] = {detail, fix};
-    const char *copies[2];
+    const char *copies[2] = {rejected_without_detail, rejected_without_fix};
     event.storage = weivel_events_copy_texts(2, texts, copies);
-    if (event.storage == NULL) {
-        return WEIVEL_STATUS_OUT_OF_MEMORY;
-    }
     event.data.want.refusal.detail = copies[0];
     event.data.want.refusal.fix = copies[1];
-    return weivel_events_push(events, &event);
+    deliver(events, &event);
 }
 
-weivel_status weivel_events_push_watch(weivel_events *events, const weivel_watch_event *heard) {
+void weivel_events_deliver_watch(weivel_events *events, const weivel_watch_event *heard) {
     weivel_event event = empty_event(WEIVEL_EVENT_WATCH);
     event.data.watch = *heard;
-    return weivel_events_push(events, &event);
+    deliver(events, &event);
 }
 
-weivel_status weivel_events_push_revoked(weivel_events *events, const weivel_revoked_event *revoked) {
+void weivel_events_deliver_revoked(weivel_events *events, const weivel_revoked_event *revoked) {
     weivel_event event = empty_event(WEIVEL_EVENT_REVOKED);
     event.data.revoked = *revoked;
-    return weivel_events_push(events, &event);
+    deliver(events, &event);
 }
 
 _Static_assert(sizeof(weivel_capability_event) <= WEIVEL_EVENT_PAYLOAD_WORDS * sizeof(uint64_t),
                "a capability event must fit the event's payload union");
 
-weivel_status weivel_events_push_capability(weivel_events *events, const weivel_capability_event *heard) {
+void weivel_events_deliver_capability(weivel_events *events, const weivel_capability_event *heard) {
     weivel_event event = empty_event(WEIVEL_EVENT_CAPABILITY);
     event.data.capability = *heard;
-    return weivel_events_push(events, &event);
+    deliver(events, &event);
 }
 
 /** Copies core-owned numbers, at today's size, into one allocation an event will own; NULL when memory runs out. */
@@ -185,7 +233,7 @@ static weivel_number *copy_numbers(const weivel_numbers *numbers) {
     for (uint32_t index = 0; index < numbers->count; index++) {
         bytes += strlen(numbers->items[index].name) + 1;
     }
-    weivel_number *items = malloc(bytes);
+    weivel_number *items = weivel_memory_allocate(bytes);
     if (items == NULL) {
         return NULL;
     }
@@ -219,7 +267,7 @@ weivel_status weivel_events_push_capacity(weivel_events *events, const weivel_ca
         event.data.capacity.constraints.items = items;
         event.data.capacity.constraints.count = constraints->count;
     }
-    return weivel_events_push(events, &event);
+    return push(events, &event);
 }
 
 weivel_status weivel_events_push_reach(weivel_events *events, uint32_t kind, weivel_handle plugin, const char *id,
@@ -237,5 +285,5 @@ weivel_status weivel_events_push_reach(weivel_events *events, uint32_t kind, wei
     event.data.reach.refusal.code = code;
     event.data.reach.refusal.detail = copies[1];
     event.data.reach.refusal.fix = copies[2];
-    return weivel_events_push(events, &event);
+    return push(events, &event);
 }

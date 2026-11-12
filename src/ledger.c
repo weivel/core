@@ -1,4 +1,5 @@
 #include "ledger.h"
+#include "memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +21,7 @@ static bool grow_ids(weivel_ids *ids) {
         return false;
     }
     uint32_t capacity = ids->capacity == 0 ? 4 : ids->capacity * 2;
-    char **items = realloc((void *)ids->items, (size_t)capacity * sizeof *items);
+    char **items = weivel_memory_reallocate((void *)ids->items, (size_t)capacity * sizeof *items);
     if (items == NULL) {
         return false;
     }
@@ -40,7 +41,7 @@ static weivel_status add_id(weivel_ids *ids, const char *id) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
     size_t length = strlen(id) + 1;
-    char *copy = malloc(length);
+    char *copy = weivel_memory_allocate(length);
     if (copy == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -65,7 +66,7 @@ bool weivel_kept_refusal_held(const weivel_kept_refusal *refusal) {
 
 static char *copy_text(const char *text) {
     size_t length = strlen(text) + 1;
-    char *copy = malloc(length);
+    char *copy = weivel_memory_allocate(length);
     if (copy != NULL) {
         memcpy(copy, text, length);
     }
@@ -92,21 +93,40 @@ static weivel_ids *relationship_of(weivel_plugin *plugin, uint32_t relationship)
         return &plugin->services_provided;
     case WEIVEL_RELATIONSHIP_CAPABILITY_PROVIDED:
         return &plugin->capabilities_provided;
+    case WEIVEL_RELATIONSHIP_CAPABILITY_CONSUMED:
+        return &plugin->capabilities_consumed;
     default:
         return &plugin->services_consumed;
     }
 }
 
-void weivel_ledger_note(weivel_core *core, weivel_plugin *plugin, uint32_t relationship, const char *id) {
-    if (add_id(relationship_of(plugin, relationship), id) != WEIVEL_STATUS_OK) {
-        weivel_core_log(core, WEIVEL_LOG_ERROR, "memory ran out recording a relationship, so the ledger misses it");
+weivel_status weivel_ledger_note(weivel_plugin *plugin, uint32_t relationship, const char *id, bool *added) {
+    *added = false;
+    if (plugin->is_host) {
+        return WEIVEL_STATUS_OK;
     }
+    weivel_ids *ids = relationship_of(plugin, relationship);
+    uint32_t before = ids->count;
+    weivel_status status = add_id(ids, id);
+    *added = ids->count > before;
+    return status;
+}
+
+void weivel_ledger_unnote(weivel_plugin *plugin, uint32_t relationship, bool added) {
+    if (!added) {
+        return;
+    }
+    weivel_ids *ids = relationship_of(plugin, relationship);
+    char *newest = ids->items[--ids->count];
+    weivel_table_remove_text(ids->index, newest);
+    free(newest);
 }
 
 void weivel_ledger_begin_activation(weivel_plugin *plugin) {
     weivel_ids_clear(&plugin->services_provided);
     weivel_ids_clear(&plugin->capabilities_provided);
     weivel_ids_clear(&plugin->services_consumed);
+    weivel_ids_clear(&plugin->capabilities_consumed);
     plugin->verified = false;
     weivel_kept_refusal_clear(&plugin->activation_refusal);
     weivel_kept_refusal_clear(&plugin->quarantine_reason);
@@ -117,19 +137,17 @@ void weivel_ledger_note_verified(weivel_plugin *plugin) {
     weivel_kept_refusal_clear(&plugin->activation_refusal);
 }
 
-void weivel_ledger_note_refused_activation(weivel_core *core, weivel_plugin *plugin, uint32_t code,
-                                           const char *detail, const char *fix) {
+void weivel_ledger_keep_refused_activation(weivel_plugin *plugin, weivel_kept_refusal *refusal) {
     weivel_kept_refusal_clear(&plugin->activation_refusal);
-    if (!weivel_kept_refusal_copy(&plugin->activation_refusal, code, detail, fix)) {
-        weivel_core_log(core, WEIVEL_LOG_ERROR,
-                        "memory ran out recording why an activation was refused, so the ledger misses it");
-    }
+    plugin->activation_refusal = *refusal;
+    memset(refusal, 0, sizeof *refusal);
 }
 
 void weivel_ledger_free_plugin(weivel_plugin *plugin) {
     weivel_ids_clear(&plugin->services_provided);
     weivel_ids_clear(&plugin->capabilities_provided);
     weivel_ids_clear(&plugin->services_consumed);
+    weivel_ids_clear(&plugin->capabilities_consumed);
     weivel_kept_refusal_clear(&plugin->activation_refusal);
     weivel_kept_refusal_clear(&plugin->quarantine_reason);
 }
@@ -221,13 +239,14 @@ static void put_row(weivel_layout *layout, const weivel_plugin *plugin, weivel_l
     row->services_provided = put_ids(layout, &plugin->services_provided);
     row->capabilities_provided = put_ids(layout, &plugin->capabilities_provided);
     row->services_consumed = put_ids(layout, &plugin->services_consumed);
+    row->capabilities_consumed = put_ids(layout, &plugin->capabilities_consumed);
 }
 
 /** Starts the writing pass: arrays from the start of `base`, texts after every array the measuring pass counted. */
 static weivel_status begin_writing(weivel_layout *layout) {
     size_t arrays = layout->array_cursor;
     size_t total = arrays + layout->text_cursor;
-    layout->base = malloc(total == 0 ? 1 : total);
+    layout->base = weivel_memory_allocate(total == 0 ? 1 : total);
     if (layout->base == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -254,7 +273,7 @@ static void merge_runs(const weivel_reach_record **from, const weivel_reach_reco
 
 /** A bottom-up merge sort by sequence, since each plugin's own records arrive sorted and the core imports no qsort. */
 static weivel_status sort_by_sequence(const weivel_reach_record **records, size_t count) {
-    const weivel_reach_record **spare = malloc(count == 0 ? 1 : count * sizeof *spare);
+    const weivel_reach_record **spare = weivel_memory_allocate(count == 0 ? 1 : count * sizeof *spare);
     if (spare == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -279,7 +298,7 @@ static weivel_status gather_reported(const weivel_core *core, weivel_reported *r
     if (count > UINT32_MAX) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    reported->records = malloc(count == 0 ? 1 : count * sizeof *reported->records);
+    reported->records = weivel_memory_allocate(count == 0 ? 1 : count * sizeof *reported->records);
     if (reported->records == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -317,6 +336,7 @@ static void put_snapshot(weivel_layout *layout, const weivel_core *core, const w
             refusals[at].kind = record->kind;
             refusals[at].plugin = record->plugin;
             refusals[at].id = id;
+            refusals[at].code = record->code;
         }
     }
     snapshot->rows = row_count == 0 ? NULL : rows;
@@ -371,7 +391,7 @@ weivel_status weivel_ledger(weivel_core *core, weivel_ledger_snapshot *snapshot,
             weivel_sized_write(snapshot, &answer, sizeof answer);
         }
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
@@ -423,7 +443,7 @@ weivel_status weivel_ledger_entry(weivel_core *core, weivel_handle plugin, weive
             weivel_sized_write(row, &answer, sizeof answer);
         }
     }
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }

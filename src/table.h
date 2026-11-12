@@ -22,6 +22,15 @@ void *weivel_table_find(const weivel_table *table, const void *key, size_t lengt
 /** Puts a value under a key, replacing any value already there. */
 weivel_status weivel_table_add(weivel_table *table, const void *key, size_t length, void *value);
 
+/**
+ * Allocates room ahead for `count` adds of keys not yet present, so those adds cannot run out of memory. On
+ * WEIVEL_STATUS_OUT_OF_MEMORY the room made before the failure stays, harmless, until weivel_table_drop_spares.
+ */
+weivel_status weivel_table_reserve(weivel_table *table, uint32_t count);
+
+/** Frees whatever room weivel_table_reserve made that no add used. */
+void weivel_table_drop_spares(weivel_table *table);
+
 /** Removes the key; false when it was not there. */
 bool weivel_table_remove(weivel_table *table, const void *key, size_t length);
 

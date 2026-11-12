@@ -1,4 +1,5 @@
 #include "text.h"
+#include "memory.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -11,7 +12,7 @@ char *weivel_text_format(const char *format, ...) {
     va_copy(measuring, arguments);
     int length = vsnprintf(NULL, 0, format, measuring);
     va_end(measuring);
-    char *text = length < 0 ? NULL : malloc((size_t)length + 1);
+    char *text = length < 0 ? NULL : weivel_memory_allocate((size_t)length + 1);
     if (text != NULL) {
         vsnprintf(text, (size_t)length + 1, format, arguments);
     }

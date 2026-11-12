@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "core_internal.h"
+#include "memory.h"
 #include "sized.h"
 
 #define UNVISITED UINT32_MAX
@@ -92,7 +93,7 @@ static bool indices_push(indices *list, uint32_t value) {
             return false;
         }
         uint32_t capacity = list->capacity == 0 ? 8 : list->capacity * 2;
-        uint32_t *items = realloc(list->items, (size_t)capacity * sizeof *items);
+        uint32_t *items = weivel_memory_reallocate(list->items, (size_t)capacity * sizeof *items);
         if (items == NULL) {
             return false;
         }
@@ -105,7 +106,7 @@ static bool indices_push(indices *list, uint32_t value) {
 
 static char *joined(const char *before, const char *middle, const char *after) {
     size_t lengths[3] = {strlen(before), strlen(middle), strlen(after)};
-    char *text = malloc(lengths[0] + lengths[1] + lengths[2] + 1);
+    char *text = weivel_memory_allocate(lengths[0] + lengths[1] + lengths[2] + 1);
     if (text == NULL) {
         return NULL;
     }
@@ -124,7 +125,7 @@ static bool add_refusal(refusal_list *list, weivel_handle plugin, uint32_t code,
     if (list->count == list->capacity) {
         uint32_t capacity = list->capacity == 0 ? 4 : list->capacity * 2;
         found_refusal *items =
-            list->capacity > UINT32_MAX / 2 ? NULL : realloc(list->items, (size_t)capacity * sizeof *items);
+            list->capacity > UINT32_MAX / 2 ? NULL : weivel_memory_reallocate(list->items, (size_t)capacity * sizeof *items);
         if (items == NULL) {
             free(detail);
             free(fix);
@@ -197,7 +198,7 @@ static bool need_is_mandatory(const planner_state *planner, const plan_unit *uni
 }
 
 static void *zeroed(size_t count, size_t size) {
-    return calloc(count == 0 ? 1 : count, size);
+    return weivel_memory_allocate_zeroed(count == 0 ? 1 : count, size);
 }
 
 static uint64_t hash_of(const char *text) {
@@ -729,7 +730,7 @@ static void *section(char *storage, size_t offset, uint32_t count) {
 static weivel_status answer_plan(const planner_state *planner, weivel_activation_plan *answer) {
     uint32_t edges = edge_count(planner);
     answer_layout layout = lay_out(planner, edges);
-    char *storage = malloc(layout.total == 0 ? 1 : layout.total);
+    char *storage = weivel_memory_allocate(layout.total == 0 ? 1 : layout.total);
     if (storage == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -837,7 +838,7 @@ weivel_status weivel_plan_activation(weivel_core *core, const weivel_handle *plu
     }
     weivel_mutex_lock(core->mutex);
     weivel_status status = check_and_plan(core, plugins, count, edge_source, host_provided, plan);
-    weivel_core_report_pending(core, pending_events);
+    weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;
 }
