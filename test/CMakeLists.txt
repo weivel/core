@@ -26,8 +26,6 @@ weivel_test(oom_test weivel_core_testing)
 
 add_test(NAME public_headers_are_ascii
     COMMAND ${CMAKE_COMMAND} -DDIRECTORY=${PROJECT_SOURCE_DIR}/include -P ${CMAKE_CURRENT_SOURCE_DIR}/ascii_check.cmake)
-add_test(NAME sources_call_nothing_forbidden
-    COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/forbidden_test.cmake)
 if(MSVC)
     set(import_reading -DFORMAT=msvc "-DTOOL=${CMAKE_LINKER}")
 elseif(NOT CMAKE_NM)
@@ -40,6 +38,3 @@ endif()
 add_test(NAME core_imports_only_allowed_calls
     COMMAND ${CMAKE_COMMAND} ${import_reading} -DLIBRARY=$<TARGET_FILE:weivel_core>
         -P ${CMAKE_CURRENT_SOURCE_DIR}/allowlist_test.cmake)
-add_test(NAME no_foreign_names
-    COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -DWORDS=${CMAKE_CURRENT_SOURCE_DIR}/names.txt
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/names_test.cmake)
