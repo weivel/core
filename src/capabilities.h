@@ -29,7 +29,22 @@ typedef struct weivel_provision {
     weivel_link by_capability;
     weivel_link in_verified;
     weivel_link by_provider;
+    weivel_link holdings;
 } weivel_provision;
+
+typedef struct weivel_capability_holding_key {
+    weivel_handle provision;
+    weivel_handle plugin;
+} weivel_capability_holding_key;
+
+/** That `plugin` holds `provision`: `all` handed it the handle, so it is told when the provision is withdrawn. */
+typedef struct weivel_capability_holding {
+    weivel_capability_holding_key key;
+    weivel_provision *provision;
+    weivel_plugin *plugin;
+    weivel_link by_provision;
+    weivel_link by_plugin;
+} weivel_capability_holding;
 
 typedef struct weivel_capability_watch {
     weivel_handle handle;
@@ -43,6 +58,9 @@ typedef struct weivel_capabilities {
     /** From each capability id to its record, freed when nothing provides or watches it. */
     weivel_table *by_id;
     weivel_link all;
+    /** From a weivel_capability_holding_key to its holding, so holding twice is found without a scan. */
+    weivel_table *holdings;
+    uint32_t holding_count;
     uint32_t count;
     uint32_t provision_count;
     uint32_t watch_count;

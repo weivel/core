@@ -122,6 +122,7 @@ static weivel_plugin *new_plugin(void) {
     weivel_list_init(&plugin->holdings);
     weivel_list_init(&plugin->provisions);
     weivel_list_init(&plugin->capability_watches);
+    weivel_list_init(&plugin->capability_holdings);
     plugin->declared = weivel_table_create();
     plugin->reported_services = weivel_table_create();
     plugin->capabilities_reachable = weivel_table_create();

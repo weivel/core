@@ -87,6 +87,7 @@ typedef struct weivel_census {
     uint32_t capabilities;
     uint32_t provisions;
     uint32_t capability_watches;
+    uint32_t capability_holdings;
 } weivel_census;
 
 /** Counts a core's records. Takes the core's mutex. */
