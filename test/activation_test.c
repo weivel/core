@@ -198,18 +198,15 @@ static void orders_a_service_provider_before_its_consumer(void) {
 
 static void orders_an_optional_requirement_that_is_present(void) {
     weivel_core *core = new_core();
-    declarations consumer = nothing_declared();
-    provide_service(&consumer, "api.http");
-    consume_service(&consumer, "storage.object", WEIVEL_CHOICE_YES, WEIVEL_CHOICE_DEFAULT);
-    weivel_handle api = register_plugin(core, "api.http", &consumer);
-    declarations provider = nothing_declared();
-    provide_service(&provider, "storage.object");
-    weivel_handle storage = register_plugin(core, "storage.object", &provider);
+    weivel_handle api = register_capability_unit(core, "api.http", "storage.object");
+    weivel_handle storage = register_capability_unit(core, "storage.object", NULL);
     weivel_handle units[] = {api, storage};
-    weivel_activation_plan plan = plan_of(core, units, 2, WEIVEL_EDGES_SERVICES, NULL);
+    weivel_activation_plan plan = plan_of(core, units, 2, WEIVEL_EDGES_CAPABILITIES, NULL);
     weivel_handle expected[] = {storage, api};
     check_order(&plan, expected, 2);
     check_no_refusal_and_no_cycle(&plan);
+    CHECK(plan.edge_count == 1);
+    CHECK(has_edge(&plan, storage, api));
     release(&plan);
     weivel_core_destroy(core);
 }
@@ -259,6 +256,8 @@ static void refuses_a_degradable_requirement_that_is_not_optional(void) {
     CHECK(plan.order_count == 0);
     CHECK(plan.refusal_count == 1);
     check_unmet(&plan.refusals[0], api, "storage.object");
+    CHECK(plan.cycle_count == 0);
+    CHECK(plan.edge_count == 0);
     release(&plan);
     weivel_core_destroy(core);
 }
@@ -271,6 +270,7 @@ static void refuses_a_missing_mandatory_requirement(void) {
     CHECK(plan.refusal_count == 1);
     check_unmet(&plan.refusals[0], api, "storage.object");
     CHECK(plan.cycle_count == 0);
+    CHECK(plan.edge_count == 0);
     release(&plan);
     weivel_core_destroy(core);
 }
@@ -281,6 +281,7 @@ static void starts_without_a_missing_optional_requirement(void) {
     weivel_activation_plan plan = plan_of(core, &api, 1, WEIVEL_EDGES_SERVICES, NULL);
     check_order(&plan, &api, 1);
     check_no_refusal_and_no_cycle(&plan);
+    CHECK(plan.edge_count == 0);
     release(&plan);
     weivel_core_destroy(core);
 }
@@ -405,6 +406,107 @@ static void a_cycles_members_read_as_a_chain_from_where_the_search_entered(void)
     } else {
         CHECK(0);
     }
+    release(&plan);
+    weivel_core_destroy(core);
+}
+
+static void a_mandatory_service_need_refuses_nothing_under_capability_sources(void) {
+    weivel_core *core = new_core();
+    declarations declared = nothing_declared();
+    provide_capability(&declared, "api.http");
+    consume_service(&declared, "missing", WEIVEL_CHOICE_NO, WEIVEL_CHOICE_NO);
+    weivel_handle api = register_plugin(core, "api.http", &declared);
+    weivel_activation_plan plan = plan_of(core, &api, 1, WEIVEL_EDGES_CAPABILITIES, NULL);
+    check_order(&plan, &api, 1);
+    check_no_refusal_and_no_cycle(&plan);
+    release(&plan);
+    weivel_core_destroy(core);
+}
+
+static void a_host_id_matching_a_capability_is_ignored_under_capability_sources(void) {
+    weivel_core *core = new_core();
+    declarations declared = nothing_declared();
+    consume_capability(&declared, "clock");
+    weivel_handle dashboard = register_plugin(core, "dashboard", &declared);
+    weivel_handle other = register_service_unit(core, "other", NULL, NULL);
+    const char *const host_ids[] = {"clock"};
+    weivel_strings host_provided = {host_ids, 1};
+    weivel_handle units[] = {dashboard, other};
+    weivel_activation_plan plan = plan_of(core, units, 2, WEIVEL_EDGES_CAPABILITIES, &host_provided);
+    weivel_handle expected[] = {dashboard, other};
+    check_order(&plan, expected, 2);
+    check_no_refusal_and_no_cycle(&plan);
+    CHECK(plan.edge_count == 0);
+    release(&plan);
+    weivel_core_destroy(core);
+}
+
+static void check_cycle(const weivel_activation_plan *plan, uint32_t cycle, const weivel_handle *members,
+                        uint32_t count) {
+    CHECK(cycle < plan->cycle_count && plan->cycles[cycle].count == count);
+    for (uint32_t index = 0; cycle < plan->cycle_count && index < count && index < plan->cycles[cycle].count;
+         index++) {
+        CHECK(plan->cycles[cycle].members[index] == members[index]);
+    }
+}
+
+static void disjoint_cycles_come_back_in_the_order_the_search_meets_them(void) {
+    weivel_core *core = new_core();
+    weivel_handle a = register_service_unit(core, "a", "a", "b");
+    weivel_handle b = register_service_unit(core, "b", "b", "a");
+    weivel_handle c = register_service_unit(core, "c", "c", "d");
+    weivel_handle d = register_service_unit(core, "d", "d", "c");
+    weivel_handle first_pair[] = {a, b};
+    weivel_handle second_pair[] = {c, d};
+    weivel_handle units[] = {a, b, c, d};
+    weivel_activation_plan plan = plan_of(core, units, 4, WEIVEL_EDGES_SERVICES, NULL);
+    CHECK(plan.order_count == 0 && plan.refusal_count == 0 && plan.cycle_count == 2);
+    check_cycle(&plan, 0, first_pair, 2);
+    check_cycle(&plan, 1, second_pair, 2);
+    release(&plan);
+    weivel_handle swapped[] = {c, d, a, b};
+    plan = plan_of(core, swapped, 4, WEIVEL_EDGES_SERVICES, NULL);
+    CHECK(plan.cycle_count == 2);
+    check_cycle(&plan, 0, second_pair, 2);
+    check_cycle(&plan, 1, first_pair, 2);
+    release(&plan);
+    weivel_core_destroy(core);
+}
+
+static void a_figure_eight_of_cycles_is_one_component(void) {
+    weivel_core *core = new_core();
+    weivel_handle a = register_service_unit(core, "a", "a", "b");
+    declarations declared = nothing_declared();
+    provide_service(&declared, "b");
+    consume_service(&declared, "a", WEIVEL_CHOICE_NO, WEIVEL_CHOICE_NO);
+    consume_service(&declared, "c", WEIVEL_CHOICE_NO, WEIVEL_CHOICE_NO);
+    weivel_handle b = register_plugin(core, "b", &declared);
+    weivel_handle c = register_service_unit(core, "c", "c", "b");
+    weivel_handle units[] = {a, b, c};
+    weivel_activation_plan plan = plan_of(core, units, 3, WEIVEL_EDGES_SERVICES, NULL);
+    CHECK(plan.order_count == 0 && plan.refusal_count == 0 && plan.cycle_count == 1);
+    weivel_handle members[] = {a, b, c};
+    check_cycle(&plan, 0, members, 3);
+    release(&plan);
+    weivel_core_destroy(core);
+}
+
+static void a_provider_meeting_two_needs_draws_one_edge(void) {
+    weivel_core *core = new_core();
+    declarations provider = nothing_declared();
+    provide_service(&provider, "first");
+    provide_service(&provider, "second");
+    weivel_handle both = register_plugin(core, "both", &provider);
+    declarations consumer = nothing_declared();
+    consume_service(&consumer, "first", WEIVEL_CHOICE_NO, WEIVEL_CHOICE_NO);
+    consume_service(&consumer, "second", WEIVEL_CHOICE_NO, WEIVEL_CHOICE_NO);
+    weivel_handle needs_both = register_plugin(core, "needs_both", &consumer);
+    weivel_handle units[] = {needs_both, both};
+    weivel_activation_plan plan = plan_of(core, units, 2, WEIVEL_EDGES_SERVICES, NULL);
+    weivel_handle expected[] = {both, needs_both};
+    check_order(&plan, expected, 2);
+    CHECK(plan.edge_count == 1);
+    CHECK(has_edge(&plan, both, needs_both));
     release(&plan);
     weivel_core_destroy(core);
 }
@@ -629,6 +731,11 @@ int main(void) {
     independent_plugins_are_placed_in_sweeps_of_the_input();
     the_hosts_services_count_as_placed_after_the_first_sweep();
     a_cycles_members_read_as_a_chain_from_where_the_search_entered();
+    a_mandatory_service_need_refuses_nothing_under_capability_sources();
+    a_host_id_matching_a_capability_is_ignored_under_capability_sources();
+    disjoint_cycles_come_back_in_the_order_the_search_meets_them();
+    a_figure_eight_of_cycles_is_one_component();
+    a_provider_meeting_two_needs_draws_one_edge();
     a_plugin_meets_its_own_need_without_an_edge();
     two_providers_both_come_first();
     a_stale_or_repeated_handle_is_refused_as_data();
