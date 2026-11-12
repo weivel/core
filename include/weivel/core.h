@@ -82,7 +82,11 @@ typedef enum weivel_refusal_code {
     /** A call was malformed; detail names the call and what was wrong with it. */
     WEIVEL_REFUSAL_MALFORMED_CALL = 1,
     /** A handle named something that no longer exists, or never did. */
-    WEIVEL_REFUSAL_STALE_HANDLE = 2
+    WEIVEL_REFUSAL_STALE_HANDLE = 2,
+    /** A manifest's own shape is wrong (no import name, a NULL in a list, an id listed twice); detail says where. */
+    WEIVEL_REFUSAL_MALFORMED_MANIFEST = 3,
+    /** This host cannot load the manifest's plugin; the answer's axis says which check refused it. */
+    WEIVEL_REFUSAL_INCOMPATIBLE = 4
 } weivel_refusal_code;
 
 /**
@@ -144,6 +148,119 @@ typedef struct weivel_event {
     } data;
 } weivel_event;
 
+/**
+ * A list of strings: `count` pointers at `items`. `items` may be NULL only when `count` is 0, and no item may be
+ * NULL. Read only during the call it is passed to.
+ */
+typedef struct weivel_strings {
+    const char *const *items;
+    uint32_t count;
+} weivel_strings;
+
+/**
+ * A yes-or-no field a manifest may leave out. Zero is WEIVEL_CHOICE_DEFAULT, so a zeroed field, or one beyond the
+ * caller's `size`, takes the default the field documents, as every other field does.
+ */
+typedef enum weivel_choice {
+    WEIVEL_CHOICE_DEFAULT = 0,
+    WEIVEL_CHOICE_NO = 1,
+    WEIVEL_CHOICE_YES = 2
+} weivel_choice;
+
+/** One named number: an attribute a service advertises, or a constraint a consumer sets on it. */
+typedef struct weivel_number {
+    uint32_t size;
+    const char *name;
+    double value;
+} weivel_number;
+
+/**
+ * A list of size-prefixed elements, `count` of them contiguous at `items`. The first element's `size` is the
+ * list's stride and every element declares the same, so elements built against an older or a newer header are read
+ * correctly. `items` may be NULL only when `count` is 0. The other element lists read the same way.
+ *
+ * @implNote A list carries no `size` of its own because it is embedded by value: it could never grow without moving
+ * the fields after it, so its elements are what grow.
+ */
+typedef struct weivel_numbers {
+    const weivel_number *items;
+    uint32_t count;
+} weivel_numbers;
+
+/** A service a plugin registers, with what it advertises until the live service reports its own. */
+typedef struct weivel_service_offer {
+    uint32_t size;
+    /** The service id. Required, opaque. */
+    const char *id;
+    /** Advertised attributes, no name twice. Appended after the offer's first shape. */
+    weivel_numbers attributes;
+} weivel_service_offer;
+
+typedef struct weivel_service_offers {
+    const weivel_service_offer *items;
+    uint32_t count;
+} weivel_service_offers;
+
+/** A service a plugin asks for, and what its absence or its shortfall costs. */
+typedef struct weivel_service_want {
+    uint32_t size;
+    /** The service id. Required, opaque. */
+    const char *id;
+    /** The identity of the one plugin to take it from, opaque; NULL means any provider of the id. */
+    const char *provider;
+    /** Whether the plugin still starts when nothing provides the service, a weivel_choice. Default YES. */
+    uint32_t optional;
+    /**
+     * Whether the plugin accepts a provider that never satisfies `constraints` once the budget is spent, a
+     * weivel_choice. Default NO. It never excuses an absence.
+     */
+    uint32_t degradable;
+    /** What the plugin needs of the service, no name twice. Appended after the want's first shape. */
+    weivel_numbers constraints;
+} weivel_service_want;
+
+typedef struct weivel_service_wants {
+    const weivel_service_want *items;
+    uint32_t count;
+} weivel_service_wants;
+
+/** The capabilities a plugin provides and consumes, as opaque ids, none listed twice. */
+typedef struct weivel_capability_declarations {
+    weivel_strings provides;
+    weivel_strings consumes;
+} weivel_capability_declarations;
+
+/** The services a plugin provides and consumes, no id listed twice in either. */
+typedef struct weivel_service_declarations {
+    weivel_service_offers provides;
+    weivel_service_wants consumes;
+} weivel_service_declarations;
+
+/**
+ * A plugin's manifest, as a value the caller builds; the core parses no file. Every string is opaque to the core
+ * and read only during the call the manifest is passed to: a call that keeps it copies it first.
+ *
+ * Its own shape is checked (a non-empty import name, no NULL in a list, no id listed twice); what a valid id or
+ * target looks like is the standard's business, not the core's. A field beyond the caller's `size` is absent, so a
+ * manifest built against an older header loads, and one built against a newer header is read up to what this core
+ * knows.
+ */
+typedef struct weivel_manifest {
+    uint32_t size;
+    /** The plugin's import name, its id. Required. */
+    const char *import_name;
+    /** The api level the plugin needs at least. */
+    uint32_t api;
+    /** The plugin's entry, opaque; NULL when it declares none. */
+    const char *entry;
+    /** The applications the plugin is built for, opaque; empty means any application. */
+    weivel_strings targets;
+    weivel_capability_declarations capabilities;
+    weivel_service_declarations services;
+    /** The permissions the plugin asks for, opaque. Appended after the manifest's first shape. */
+    weivel_strings permissions;
+} weivel_manifest;
+
 /** The largest `initial_event_capacity` weivel_core_create accepts. */
 #define WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY 65536u
 
@@ -155,6 +272,10 @@ typedef struct weivel_core_options {
     uint32_t initial_event_capacity;
     /** The least level of log event the core queues, a weivel_log_level. Default WEIVEL_LOG_WARNING. */
     uint32_t minimum_log_level;
+    /** The highest api level this host implements. Default 0, so a plugin declaring any api above 0 is refused. */
+    uint32_t api;
+    /** The applications this host hosts, opaque, copied by weivel_core_create; empty means every application. */
+    weivel_strings applications;
 } weivel_core_options;
 
 /**
@@ -163,9 +284,10 @@ typedef struct weivel_core_options {
  * @param options may be NULL for every default; read only during the call.
  * @param core receives the new core, owned by the caller until weivel_core_destroy. Required.
  * @param pending_events receives how many events wait; may be NULL.
- * @return WEIVEL_STATUS_OK, or WEIVEL_STATUS_MALFORMED (no `core`, options smaller than their first shape, or an
- * initial_event_capacity above its maximum) or WEIVEL_STATUS_OUT_OF_MEMORY, with `*core` set to NULL when `core` is
- * given. No core exists to carry a refusal event for either.
+ * @return WEIVEL_STATUS_OK, or WEIVEL_STATUS_MALFORMED (no `core`, options smaller than their first shape, an
+ * initial_event_capacity above its maximum, or an `applications` list holding a NULL) or
+ * WEIVEL_STATUS_OUT_OF_MEMORY, with `*core` set to NULL when `core` is given. No core exists to carry a refusal event
+ * for either.
  * Threading: any thread.
  */
 WEIVEL_API weivel_status weivel_core_create(const weivel_core_options *options, weivel_core **core,
@@ -222,6 +344,73 @@ WEIVEL_API weivel_status weivel_next_deadline(weivel_core *core, int64_t *deadli
  * Threading: any thread.
  */
 WEIVEL_API weivel_status weivel_advance(weivel_core *core, int64_t now, uint32_t *pending_events);
+
+/** Which compatibility check refused a manifest. */
+typedef enum weivel_axis {
+    /** None did: the manifest is supported, or its own shape was refused before any check ran. */
+    WEIVEL_AXIS_NONE = 0,
+    /** The manifest targets applications this host does not host. Checked first. */
+    WEIVEL_AXIS_APPLICATION = 1,
+    /** The manifest needs a higher api than this host implements. Checked second. */
+    WEIVEL_AXIS_API = 2
+} weivel_axis;
+
+/**
+ * The answer to weivel_supports, filled into a struct the caller owns. When `supported` is 0, `refusal` says why
+ * (code WEIVEL_REFUSAL_INCOMPATIBLE with `axis` set, or WEIVEL_REFUSAL_MALFORMED_MANIFEST with axis NONE); when it
+ * is 1, `refusal` is code NONE with NULL texts. The texts live in `storage`, private to the core, until
+ * weivel_support_release.
+ */
+typedef struct weivel_support {
+    uint32_t size;
+    uint32_t supported;
+    /** A weivel_axis. */
+    uint32_t axis;
+    weivel_refusal refusal;
+    void *storage;
+} weivel_support;
+
+/**
+ * Decides whether this host can load the manifest's plugin, against the applications and api given to
+ * weivel_core_create. This is the one place compatibility is decided: the application first, then the api floor.
+ * Language never refuses. An incompatible or malformed manifest is an answer, not a failure, and queues nothing.
+ *
+ * @param manifest read only during the call. Required.
+ * @param answer the caller's struct with `size` set and nothing held, as WEIVEL_INIT or a release leaves it; on
+ * WEIVEL_STATUS_OK it holds the answer and must be passed to weivel_support_release.
+ * @param pending_events receives how many events wait; may be NULL.
+ * @return WEIVEL_STATUS_OK with an answer; WEIVEL_STATUS_MALFORMED for a NULL core, manifest or answer, a size below
+ * either struct's first shape, or an answer still holding one, queuing a refusal when the core is given;
+ * WEIVEL_STATUS_OUT_OF_MEMORY.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_supports(weivel_core *core, const weivel_manifest *manifest, weivel_support *answer,
+                                         uint32_t *pending_events);
+
+/**
+ * Frees what an answer carries and leaves it empty.
+ *
+ * @return WEIVEL_STATUS_OK, also as a no-op for an empty answer or an all-zero one (size 0); WEIVEL_STATUS_MALFORMED
+ * for NULL or a size between 1 and the answer's first shape.
+ * Threading: any thread; needs no core.
+ */
+WEIVEL_API weivel_status weivel_support_release(weivel_support *answer);
+
+/**
+ * Registers a plugin by its manifest, which the core copies whole before returning, so the caller may free its own
+ * at once. Registering checks the manifest's shape only, never its compatibility, which weivel_supports answers.
+ *
+ * @param manifest read only during the call. Required.
+ * @param plugin receives the plugin's handle. Required.
+ * @param pending_events receives how many events wait; may be NULL.
+ * @return WEIVEL_STATUS_OK with `*plugin` set; WEIVEL_STATUS_REFUSED for a malformed manifest, queuing a refusal
+ * with code WEIVEL_REFUSAL_MALFORMED_MANIFEST; WEIVEL_STATUS_MALFORMED for a NULL core, manifest or plugin or a
+ * manifest smaller than its first shape, queuing a refusal when the core is given; WEIVEL_STATUS_OUT_OF_MEMORY.
+ * `*plugin` is 0 on every answer but OK.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_register_manifest(weivel_core *core, const weivel_manifest *manifest,
+                                                  weivel_handle *plugin, uint32_t *pending_events);
 
 #ifdef __cplusplus
 }

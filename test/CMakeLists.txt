@@ -12,6 +12,8 @@ weivel_test(handles_test weivel_core)
 weivel_test(concurrency_test weivel_core)
 weivel_test(sized_test weivel_core)
 weivel_test(abi_test weivel_core_shared)
+weivel_test(manifest_test weivel_core)
+weivel_test(compatibility_test weivel_core_shared)
 
 add_test(NAME public_headers_are_ascii
     COMMAND ${CMAKE_COMMAND} -DDIRECTORY=${PROJECT_SOURCE_DIR}/include -P ${CMAKE_CURRENT_SOURCE_DIR}/ascii_check.cmake)
