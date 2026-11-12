@@ -23,17 +23,27 @@ typedef struct weivel_declaration {
     bool consumed;
 } weivel_declaration;
 
+/** One reported refusal of reach, the shape the ledger exposes; `sequence` orders reports across plugins. */
+typedef struct weivel_reach_record {
+    uint32_t kind;
+    weivel_handle plugin;
+    char *id;
+    uint64_t sequence;
+} weivel_reach_record;
+
 /**
  * A registered plugin: the manifest it was registered with, owned by the core, the handle that names it, and what
- * it holds in the registry. A released plugin's record is kept, so its late calls still resolve, until the core
- * is destroyed.
+ * it holds in the registry. A released plugin's record is kept, so its late calls still resolve, until it is
+ * forgotten.
  */
 typedef struct weivel_plugin {
     weivel_owned_manifest manifest;
     weivel_handle handle;
+    /** Where the plugin sits in the collection, so forgetting it takes no search. */
+    uint32_t index;
     uint32_t state;
-    /** NULL until the plugin is first opened. */
-    char *identity;
+    /** The manifest's identity, never NULL. */
+    const char *identity;
     uint64_t payload;
     /** The services it consumes, then those it only provides, each id once, pointing into `manifest`. */
     weivel_declaration *declarations;
@@ -42,6 +52,9 @@ typedef struct weivel_plugin {
     weivel_table *declared;
     /** The service ids whose refusal has been reported for this plugin, keyed by the id its reported record owns. */
     weivel_table *reported_services;
+    weivel_reach_record *reported;
+    uint32_t reported_count;
+    uint32_t reported_capacity;
     weivel_link registrations;
     weivel_link wants;
     weivel_link watches;
@@ -61,5 +74,8 @@ bool weivel_plugins_named(const weivel_plugins *plugins, const char *import_name
 
 /** The plugin that is not released holding `identity`, or NULL. */
 weivel_plugin *weivel_plugins_with_identity(const weivel_plugins *plugins, const char *identity);
+
+/** How many plugin records the collection holds, released ones included until they are forgotten. */
+uint32_t weivel_plugins_count(const weivel_plugins *plugins);
 
 #endif

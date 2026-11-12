@@ -19,8 +19,8 @@ typedef struct weivel_manifest_problem {
 
 /**
  * A manifest the core owns. Every pointer in `value` points into `storage`, every struct in it is at today's size,
- * an empty list has NULL items, and `optional` and `degradable` hold WEIVEL_CHOICE_YES or WEIVEL_CHOICE_NO, never
- * the default, so nothing reading it resolves a default again.
+ * an empty list has NULL items, `optional` and `degradable` hold WEIVEL_CHOICE_YES or WEIVEL_CHOICE_NO, never
+ * the default, and `identity` is never NULL, so nothing reading it resolves a default again.
  */
 typedef struct weivel_owned_manifest {
     weivel_manifest value;

@@ -65,22 +65,21 @@ typedef struct weivel_watch {
     weivel_link by_consumer;
 } weivel_watch;
 
-/** One reported refusal of reach, the shape the ledger exposes. */
-typedef struct weivel_reach_record {
-    uint32_t kind;
-    weivel_handle plugin;
-    char *id;
-} weivel_reach_record;
-
 typedef struct weivel_registry {
-    /** From each service id ever named to its slot, kept for the life of the core. */
+    /** From each service id to its slot, freed when nothing is registered, waiting or watching there. */
     weivel_table *slots;
     weivel_link all_slots;
     /** From a weivel_holding_key to its holding, so holding a service twice is found without a scan. */
     weivel_table *holdings;
-    weivel_reach_record *reported;
-    uint32_t reported_count;
-    uint32_t reported_capacity;
+    uint32_t slot_count;
+    uint32_t holding_count;
+    /** The sequence the next reported refusal takes, ordering reports across plugins. */
+    uint64_t next_report;
+    /**
+     * When set, the next holding answers out of memory and the switch clears.
+     * @implNote Exists so a test can reach the out-of-memory path of a holding without exhausting the heap.
+     */
+    bool fail_next_holding;
 } weivel_registry;
 
 weivel_registry *weivel_registry_create(void);
@@ -91,8 +90,11 @@ void weivel_registry_destroy(weivel_registry *registry);
 /** The slot of `id`, or NULL when the id was never named. */
 weivel_slot *weivel_registry_find(const weivel_registry *registry, const char *id);
 
-/** The slot of `id`, made when the id was never named; NULL when memory runs out. */
+/** The slot of `id`, made when none exists; NULL when memory runs out. */
 weivel_slot *weivel_registry_slot(weivel_registry *registry, const char *id);
+
+/** Frees a slot nothing is registered, waiting or watching on any more; a slot still in use is kept. */
+void weivel_registry_release_slot(weivel_registry *registry, weivel_slot *slot);
 
 /** The identity of a registration's owner, or "the host". */
 const char *weivel_registry_owner_name(const weivel_registration *registration);
@@ -100,7 +102,11 @@ const char *weivel_registry_owner_name(const weivel_registration *registration);
 /** Whether a consumer bound to `provider`, NULL for any, accepts what `registration`'s owner registered. */
 bool weivel_registry_accepts(const char *provider, const weivel_registration *registration);
 
-/** Records that `plugin` holds `registration`, once however often it is handed it. */
+/**
+ * Records that `plugin` holds `registration`, once however often it is handed it. On WEIVEL_STATUS_OUT_OF_MEMORY
+ * nothing is recorded, and the caller must not hand the plugin the registration, since it would never be told of
+ * its revocation.
+ */
 weivel_status weivel_registry_hold(weivel_core *core, weivel_registration *registration, weivel_plugin *plugin);
 
 /** Ends a registration: revokes it to every holder, then tells every watch of its id that accepts its owner. */
@@ -140,12 +146,15 @@ void weivel_reach_log_late(weivel_core *core, const weivel_plugin *plugin, const
 /** The texts a want gets when its plugin stops while it waits, or asks after it stopped. */
 void weivel_reach_stopped(const char *id, weivel_reach *reach);
 
-/** How many refusals of reach were reported, and the one at `index`; read with the core's mutex held. */
-uint32_t weivel_reach_reported_count(const weivel_core *core);
-const weivel_reach_record *weivel_reach_reported_at(const weivel_core *core, uint32_t index);
+/** How many refusals of reach were reported for a plugin, and the one at `index`; read with the mutex held. */
+uint32_t weivel_reach_reported_count(const weivel_plugin *plugin);
+const weivel_reach_record *weivel_reach_reported_at(const weivel_plugin *plugin, uint32_t index);
 
-/** Settles a want with a registration, which its consumer then holds. */
-void weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration);
+/**
+ * Settles a want with a registration, which its consumer then holds. On WEIVEL_STATUS_OUT_OF_MEMORY the holding
+ * could not be recorded, so the want is left exactly as it was, still waiting.
+ */
+weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration);
 
 /** Rejects a want with a refusal. */
 void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, const char *detail, const char *fix);

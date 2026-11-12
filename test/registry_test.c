@@ -349,7 +349,7 @@ static void a_released_name_can_be_registered_again(void) {
     weivel_core_destroy(core);
 }
 
-static void a_plugin_never_opened_is_named_by_its_import_name_when_late(void) {
+static void a_plugin_never_opened_is_named_by_its_identity_when_late(void) {
     weivel_core *core = core_knowing(NULL, 0);
     plugin_spec spec = {"forge:3", "calendar", {"calendar:events"}, {NULL}, {NULL}};
     weivel_handle plugin = register_spec(core, &spec);
@@ -359,7 +359,7 @@ static void a_plugin_never_opened_is_named_by_its_import_name_when_late(void) {
     CHECK(weivel_watch_service(core, plugin, "calendar:events", &watch, NULL) == WEIVEL_STATUS_REFUSED);
     drain(core);
     check_text(nth_of(WEIVEL_EVENT_LOG, 0)->detail,
-               "ignored a late watch of service \"calendar:events\" from calendar, which is no longer running", "log");
+               "ignored a late watch of service \"calendar:events\" from forge:3, which is no longer running", "log");
     weivel_core_destroy(core);
 }
 
@@ -385,24 +385,166 @@ static void a_plugin_must_be_opened_before_it_reaches(void) {
     weivel_core_destroy(core);
 }
 
+static weivel_manifest bare_manifest(const char *import_name, const char *identity) {
+    weivel_manifest manifest = WEIVEL_INIT(weivel_manifest);
+    manifest.import_name = import_name;
+    manifest.identity = identity;
+    return manifest;
+}
+
 static void an_identity_is_held_by_one_plugin(void) {
     weivel_core *core = core_knowing(NULL, 0);
     plugin_spec first = {"forge:2", "calendar", {NULL}, {NULL}, {NULL}};
-    plugin_spec second = {"other", "agenda", {NULL}, {NULL}, {NULL}};
-    weivel_handle holder = open_spec(core, &first);
-    weivel_handle claimant = register_spec(core, &second);
-    weivel_plugin_options options = WEIVEL_INIT(weivel_plugin_options);
-    options.identity = "forge:2";
+    weivel_handle holder = register_spec(core, &first);
+    weivel_manifest claimant = bare_manifest("agenda", "forge:2");
+    weivel_handle refused = 7;
     forget(core);
-    CHECK(weivel_open_plugin(core, claimant, &options, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_register_manifest(core, &claimant, &refused, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(refused == 0);
     drain(core);
-    const seen *refused = nth_of(WEIVEL_EVENT_REFUSAL, 0);
-    CHECK(refused->code == WEIVEL_REFUSAL_IDENTITY_TAKEN);
-    check_text(refused->detail, "a plugin with the identity \"forge:2\" is already open", "detail");
+    const seen *taken = nth_of(WEIVEL_EVENT_REFUSAL, 0);
+    CHECK(taken->code == WEIVEL_REFUSAL_IDENTITY_TAKEN);
+    check_text(taken->detail, "a plugin with the identity \"forge:2\" is already registered", "detail");
+    check_text(taken->fix, "give each plugin its own identity, or release the plugin that holds it", "fix");
+    weivel_manifest by_name = bare_manifest("forge:2", NULL);
+    CHECK(weivel_register_manifest(core, &by_name, &refused, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(weivel_release_plugin(core, holder, NULL) == WEIVEL_STATUS_OK);
-    CHECK(weivel_open_plugin(core, claimant, &options, NULL) == WEIVEL_STATUS_OK);
-    options.identity = "";
-    CHECK(weivel_open_plugin(core, claimant, &options, NULL) == WEIVEL_STATUS_MALFORMED);
+    weivel_handle admitted = 0;
+    CHECK(weivel_register_manifest(core, &claimant, &admitted, NULL) == WEIVEL_STATUS_OK);
+    weivel_manifest empty = bare_manifest("notes", "");
+    forget(core);
+    CHECK(weivel_register_manifest(core, &empty, &refused, NULL) == WEIVEL_STATUS_REFUSED);
+    drain(core);
+    CHECK(nth_of(WEIVEL_EVENT_REFUSAL, 0)->code == WEIVEL_REFUSAL_MALFORMED_MANIFEST);
+    check_text(nth_of(WEIVEL_EVENT_REFUSAL, 0)->detail, "the manifest of \"notes\" gives an empty identity", "detail");
+    weivel_core_destroy(core);
+}
+
+static void a_reopened_plugin_keeps_the_identity_consumers_bind_to(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    plugin_spec provider_spec = {"forge:2", "calendar", {NULL}, {NULL}, {"calendar:events"}};
+    plugin_spec consumer_spec = {"agenda", NULL, {"calendar:events"}, {"forge:2"}, {NULL}};
+    weivel_handle provider = open_spec(core, &provider_spec);
+    weivel_handle consumer = open_spec(core, &consumer_spec);
+    CHECK(weivel_quarantine_plugin(core, provider, NULL) == WEIVEL_STATUS_OK);
+    weivel_plugin_options options = WEIVEL_INIT(weivel_plugin_options);
+    options.payload = 99;
+    CHECK(weivel_open_plugin(core, provider, &options, NULL) == WEIVEL_STATUS_OK);
+    weivel_handle registration = register_service(core, provider, "calendar:events");
+    weivel_handle got = 0;
+    CHECK(weivel_get_service(core, consumer, "calendar:events", &got, NULL) == WEIVEL_STATUS_OK);
+    CHECK(got == registration);
+    weivel_core_destroy(core);
+}
+
+static void a_manifest_of_the_previous_size_is_named_by_its_import_name(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    weivel_service_offer offer = WEIVEL_INIT(weivel_service_offer);
+    offer.id = "calendar:events";
+    weivel_manifest manifest = bare_manifest("calendar", "planted beyond the size");
+    manifest.size = (uint32_t)offsetof(weivel_manifest, identity);
+    manifest.services.provides.items = &offer;
+    manifest.services.provides.count = 1;
+    weivel_handle provider = 0;
+    CHECK(weivel_register_manifest(core, &manifest, &provider, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_open_plugin(core, provider, NULL, NULL) == WEIVEL_STATUS_OK);
+    plugin_spec consumer_spec = {"agenda", NULL, {"calendar:events"}, {"calendar"}, {NULL}};
+    weivel_handle consumer = open_spec(core, &consumer_spec);
+    weivel_handle registration = register_service(core, provider, "calendar:events");
+    weivel_handle got = 0;
+    CHECK(weivel_get_service(core, consumer, "calendar:events", &got, NULL) == WEIVEL_STATUS_OK);
+    CHECK(got == registration);
+    weivel_core_destroy(core);
+}
+
+static void a_forgotten_plugin_answers_stale(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    plugin_spec owner_spec = {"calendar", NULL, {NULL}, {NULL}, {"calendar:events"}};
+    plugin_spec leaving_spec = {"notes", NULL, {"calendar:events"}, {NULL}, {NULL}};
+    weivel_handle owner = open_spec(core, &owner_spec);
+    weivel_handle leaving = open_spec(core, &leaving_spec);
+    weivel_handle registration = register_service(core, owner, "calendar:events");
+    forget(core);
+    CHECK(weivel_forget_plugin(core, leaving, NULL) == WEIVEL_STATUS_REFUSED);
+    drain(core);
+    CHECK(nth_of(WEIVEL_EVENT_REFUSAL, 0)->code == WEIVEL_REFUSAL_PLUGIN_STATE);
+    check_text(nth_of(WEIVEL_EVENT_REFUSAL, 0)->detail, "the plugin \"notes\" is not released", "detail");
+    CHECK(weivel_quarantine_plugin(core, leaving, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_forget_plugin(core, leaving, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_release_plugin(core, leaving, NULL) == WEIVEL_STATUS_OK);
+    weivel_handle got = 0;
+    CHECK(weivel_get_service(core, leaving, "calendar:events", &got, NULL) == WEIVEL_STATUS_OK);
+    forget(core);
+    CHECK(weivel_forget_plugin(core, leaving, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(revocations_to(leaving, registration) == 1);
+    forget(core);
+    CHECK(weivel_get_service(core, leaving, "calendar:events", &got, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_forget_plugin(core, leaving, NULL) == WEIVEL_STATUS_REFUSED);
+    drain(core);
+    CHECK(nth_of(WEIVEL_EVENT_REFUSAL, 0)->code == WEIVEL_REFUSAL_STALE_HANDLE);
+    CHECK(nth_of(WEIVEL_EVENT_REFUSAL, 1)->code == WEIVEL_REFUSAL_STALE_HANDLE);
+    CHECK(weivel_unregister(core, registration, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(count_kind(WEIVEL_EVENT_REVOKED) == 0);
+    CHECK(weivel_forget_plugin(NULL, leaving, NULL) == WEIVEL_STATUS_MALFORMED);
+    weivel_core_destroy(core);
+}
+
+static void a_plugin_holding_its_own_registration_is_released(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    plugin_spec spec = {"calendar", NULL, {NULL}, {NULL}, {"calendar:events"}};
+    plugin_spec watcher_spec = {"agenda", NULL, {"calendar:events"}, {NULL}, {NULL}};
+    weivel_handle plugin = open_spec(core, &spec);
+    weivel_handle watcher = open_spec(core, &watcher_spec);
+    weivel_handle watch = 0;
+    CHECK(weivel_watch_service(core, watcher, "calendar:events", &watch, NULL) == WEIVEL_STATUS_OK);
+    weivel_handle registration = register_service(core, plugin, "calendar:events");
+    weivel_handle got = 0;
+    CHECK(weivel_get_service(core, plugin, "calendar:events", &got, NULL) == WEIVEL_STATUS_OK);
+    CHECK(got == registration);
+    forget(core);
+    CHECK(weivel_release_plugin(core, plugin, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(revocations_to(plugin, registration) == 1);
+    CHECK(revocations_to(watcher, registration) == 1);
+    CHECK(heard_by(watch, WEIVEL_CHANGE_UNREGISTERED) == 1);
+    CHECK(the_journal.count == 3);
+    CHECK(weivel_forget_plugin(core, plugin, NULL) == WEIVEL_STATUS_OK);
+    weivel_core_destroy(core);
+}
+
+/** Deadlines set out of order, some withdrawn, come due strictly in time order, and the next one is always exact. */
+static void deadlines_come_due_in_order_whatever_is_withdrawn(void) {
+    enum { WANTS = 200 };
+    weivel_core *core = core_knowing(accounts, 1);
+    weivel_handle consumer = consumer_of(core, "consumer", "accounts");
+    weivel_handle wants[WANTS];
+    for (uint32_t index = 0; index < WANTS; index++) {
+        wants[index] = want_within(core, consumer, "accounts", 0, (int64_t)((index * 37) % WANTS) * 10 + 10);
+    }
+    for (uint32_t index = 0; index < WANTS; index += 3) {
+        CHECK(weivel_unregister(core, wants[index], NULL) == WEIVEL_STATUS_OK);
+    }
+    forget(core);
+    int64_t previous = 0;
+    uint32_t settled = 0;
+    int64_t deadline = 0;
+    while (weivel_next_deadline(core, &deadline, NULL) == WEIVEL_STATUS_OK) {
+        CHECK(deadline > previous);
+        CHECK(weivel_advance(core, deadline - 1, NULL) == WEIVEL_STATUS_OK);
+        drain(core);
+        CHECK(count_kind(WEIVEL_EVENT_WANT_SETTLED) == settled);
+        CHECK(weivel_advance(core, deadline, NULL) == WEIVEL_STATUS_OK);
+        drain(core);
+        CHECK(count_kind(WEIVEL_EVENT_WANT_SETTLED) == settled + 1);
+        settled = count_kind(WEIVEL_EVENT_WANT_SETTLED);
+        previous = deadline;
+        if (settled > WANTS) {
+            break;
+        }
+    }
+    CHECK(settled == WANTS - (WANTS + 2) / 3);
     weivel_core_destroy(core);
 }
 
@@ -709,8 +851,13 @@ int main(void) {
     a_quarantined_plugin_keeps_its_name_and_reopens();
     a_released_name_can_be_registered_again();
     a_plugin_must_be_opened_before_it_reaches();
-    a_plugin_never_opened_is_named_by_its_import_name_when_late();
+    a_plugin_never_opened_is_named_by_its_identity_when_late();
     an_identity_is_held_by_one_plugin();
+    a_reopened_plugin_keeps_the_identity_consumers_bind_to();
+    a_manifest_of_the_previous_size_is_named_by_its_import_name();
+    a_forgotten_plugin_answers_stale();
+    a_plugin_holding_its_own_registration_is_released();
+    deadlines_come_due_in_order_whatever_is_withdrawn();
     hands_back_the_payload_it_was_given();
     unbound_lists_a_namespaced_service_with_no_provider();
     unbound_omits_a_bare_shared_service();
