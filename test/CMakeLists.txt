@@ -20,7 +20,7 @@ weivel_test(reach_test weivel_core)
 weivel_test(lifecycle_test weivel_core)
 weivel_test(constraints_test weivel_core)
 weivel_test(capabilities_test weivel_core)
-weivel_test(ledger_test weivel_core_shared)
+weivel_test(ledger_test weivel_core)
 weivel_test(threads_test weivel_core)
 
 add_test(NAME public_headers_are_ascii

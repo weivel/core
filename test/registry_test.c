@@ -319,8 +319,8 @@ static void a_quarantined_plugin_keeps_its_name_and_reopens(void) {
     plugin_spec spec = {"calendar", NULL, {NULL}, {NULL}, {"calendar:events"}};
     weivel_handle plugin = open_spec(core, &spec);
     register_service(core, plugin, "calendar:events");
-    CHECK(weivel_quarantine_plugin(core, plugin, NULL) == WEIVEL_STATUS_OK);
-    CHECK(weivel_quarantine_plugin(core, plugin, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_quarantine_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_quarantine_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
     weivel_manifest manifest = WEIVEL_INIT(weivel_manifest);
     manifest.import_name = "calendar";
     weivel_handle again = 0;
@@ -342,7 +342,7 @@ static void a_released_name_can_be_registered_again(void) {
     CHECK(again != plugin && again != 0);
     forget(core);
     CHECK(weivel_open_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_REFUSED);
-    CHECK(weivel_quarantine_plugin(core, plugin, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(weivel_quarantine_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_REFUSED);
     drain(core);
     CHECK(nth_of(WEIVEL_EVENT_REFUSAL, 0)->code == WEIVEL_REFUSAL_PLUGIN_STATE);
     check_text(nth_of(WEIVEL_EVENT_REFUSAL, 0)->detail, "the plugin \"calendar\" was released", "detail");
@@ -353,7 +353,7 @@ static void a_plugin_never_opened_is_named_by_its_identity_when_late(void) {
     weivel_core *core = core_knowing(NULL, 0);
     plugin_spec spec = {"forge:3", "calendar", {"calendar:events"}, {NULL}, {NULL}};
     weivel_handle plugin = register_spec(core, &spec);
-    CHECK(weivel_quarantine_plugin(core, plugin, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_quarantine_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
     forget(core);
     weivel_handle watch = 1;
     CHECK(weivel_watch_service(core, plugin, "calendar:events", &watch, NULL) == WEIVEL_STATUS_REFUSED);
@@ -426,7 +426,7 @@ static void a_reopened_plugin_keeps_the_identity_consumers_bind_to(void) {
     plugin_spec consumer_spec = {"agenda", NULL, {"calendar:events"}, {"forge:2"}, {NULL}};
     weivel_handle provider = open_spec(core, &provider_spec);
     weivel_handle consumer = open_spec(core, &consumer_spec);
-    CHECK(weivel_quarantine_plugin(core, provider, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_quarantine_plugin(core, provider, NULL, NULL) == WEIVEL_STATUS_OK);
     weivel_plugin_options options = WEIVEL_INIT(weivel_plugin_options);
     options.payload = 99;
     CHECK(weivel_open_plugin(core, provider, &options, NULL) == WEIVEL_STATUS_OK);
@@ -469,7 +469,7 @@ static void a_forgotten_plugin_answers_stale(void) {
     drain(core);
     CHECK(nth_of(WEIVEL_EVENT_REFUSAL, 0)->code == WEIVEL_REFUSAL_PLUGIN_STATE);
     check_text(nth_of(WEIVEL_EVENT_REFUSAL, 0)->detail, "the plugin \"notes\" is not released", "detail");
-    CHECK(weivel_quarantine_plugin(core, leaving, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_quarantine_plugin(core, leaving, NULL, NULL) == WEIVEL_STATUS_OK);
     CHECK(weivel_forget_plugin(core, leaving, NULL) == WEIVEL_STATUS_REFUSED);
     CHECK(weivel_release_plugin(core, leaving, NULL) == WEIVEL_STATUS_OK);
     weivel_handle got = 0;
@@ -747,7 +747,7 @@ static void malformed_calls_change_nothing(void) {
     CHECK(weivel_open_plugin(core, plugin, &small, NULL) == WEIVEL_STATUS_MALFORMED);
     CHECK(weivel_unregister(NULL, plugin, NULL) == WEIVEL_STATUS_MALFORMED);
     CHECK(weivel_release_plugin(NULL, plugin, NULL) == WEIVEL_STATUS_MALFORMED);
-    CHECK(weivel_quarantine_plugin(NULL, plugin, NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(weivel_quarantine_plugin(NULL, plugin, NULL, NULL) == WEIVEL_STATUS_MALFORMED);
     CHECK(weivel_open_plugin(NULL, plugin, NULL, NULL) == WEIVEL_STATUS_MALFORMED);
     CHECK(weivel_service_ids(core, plugin, NULL, NULL) == WEIVEL_STATUS_MALFORMED);
     forget(core);

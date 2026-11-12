@@ -98,7 +98,7 @@ static void perform(weivel_core *core, const weivel_handle *plugins, const step 
         record->status = weivel_release_plugin(core, plugin, NULL);
         break;
     case QUARANTINE:
-        record->status = weivel_quarantine_plugin(core, plugin, NULL);
+        record->status = weivel_quarantine_plugin(core, plugin, NULL, NULL);
         break;
     }
     drain(core);
@@ -607,6 +607,211 @@ static void a_long_id_is_never_cut_from_a_reach_refusal(void) {
     weivel_core_destroy(core);
 }
 
+/** Drains every event, counting those whose texts carry `text` whole: a refusal of any kind, or a log. */
+static uint32_t carried_whole(weivel_core *core, const char *text) {
+    uint32_t whole = 0;
+    weivel_event event = WEIVEL_INIT(weivel_event);
+    while (weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_OK) {
+        const weivel_refusal *refusal = NULL;
+        if (event.kind == WEIVEL_EVENT_REFUSAL) {
+            refusal = &event.data.refusal;
+        } else if (event.kind == WEIVEL_EVENT_REACH_REFUSED) {
+            refusal = &event.data.reach.refusal;
+        } else if (event.kind == WEIVEL_EVENT_WANT_SETTLED) {
+            refusal = &event.data.want.refusal;
+        } else if (event.kind == WEIVEL_EVENT_LOG) {
+            whole += strstr(event.data.log.text, text) != NULL;
+        }
+        if (refusal != NULL && refusal->detail != NULL) {
+            whole += strstr(refusal->detail, text) != NULL || strstr(refusal->fix, text) != NULL;
+        }
+        weivel_event_release(&event);
+    }
+    return whole;
+}
+
+static weivel_status register_named(weivel_core *core, const char *import_name, const char *identity,
+                                    weivel_handle *plugin) {
+    weivel_manifest manifest = WEIVEL_INIT(weivel_manifest);
+    manifest.import_name = import_name;
+    manifest.identity = identity;
+    manifest.api = 1;
+    *plugin = 0;
+    return weivel_register_manifest(core, &manifest, plugin, NULL);
+}
+
+static void a_long_name_is_never_cut_from_a_plugin_refusal(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    char *name = repeated('n', 1000, "plugin");
+    char *identity = repeated('i', 1000, "who");
+    weivel_handle plugin = 0;
+    weivel_handle other = 0;
+    CHECK(register_named(core, name, identity, &plugin) == WEIVEL_STATUS_OK);
+    forget(core);
+    CHECK(register_named(core, name, NULL, &other) == WEIVEL_STATUS_REFUSED);
+    CHECK(carried_whole(core, name) == 1);
+    CHECK(register_named(core, "elsewhere", identity, &other) == WEIVEL_STATUS_REFUSED);
+    CHECK(carried_whole(core, identity) == 1);
+    weivel_handle registration = 0;
+    CHECK(weivel_register_service(core, plugin, "x:y", &registration, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(carried_whole(core, name) == 1);
+    CHECK(weivel_release_plugin(core, plugin, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_open_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(carried_whole(core, name) == 1);
+    CHECK(weivel_verify_activation(core, plugin, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(carried_whole(core, name) == 1);
+    free(identity);
+    free(name);
+    weivel_core_destroy(core);
+}
+
+static void a_long_text_is_never_cut_from_a_manifest_refusal(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    char *name = repeated('n', 1000, "plugin");
+    char *value = repeated('v', 1000, "value");
+    char *service = repeated('s', 1000, "plugin:");
+    const char *twice[] = {value, value};
+    weivel_manifest manifest = WEIVEL_INIT(weivel_manifest);
+    manifest.import_name = name;
+    manifest.api = 1;
+    manifest.targets.items = twice;
+    manifest.targets.count = 2;
+    weivel_handle plugin = 0;
+    CHECK(weivel_register_manifest(core, &manifest, &plugin, NULL) == WEIVEL_STATUS_REFUSED);
+    drain(core);
+    the_journal.count = 0;
+    CHECK(weivel_register_manifest(core, &manifest, &plugin, NULL) == WEIVEL_STATUS_REFUSED);
+    weivel_event event = WEIVEL_INIT(weivel_event);
+    CHECK(weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_OK);
+    CHECK(event.kind == WEIVEL_EVENT_REFUSAL && strstr(event.data.refusal.detail, name) != NULL &&
+          strstr(event.data.refusal.detail, value) != NULL && strstr(event.data.refusal.fix, value) != NULL);
+    weivel_event_release(&event);
+
+    weivel_support answer = WEIVEL_INIT(weivel_support);
+    CHECK(weivel_supports(core, &manifest, &answer, NULL) == WEIVEL_STATUS_OK);
+    CHECK(answer.supported == 0 && strstr(answer.refusal.detail, value) != NULL &&
+          strstr(answer.refusal.detail, name) != NULL);
+    weivel_support_release(&answer);
+
+    manifest.targets.count = 0;
+    manifest.identity = "";
+    CHECK(weivel_register_manifest(core, &manifest, &plugin, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(carried_whole(core, name) == 1);
+    manifest.identity = NULL;
+
+    weivel_service_want want = WEIVEL_INIT(weivel_service_want);
+    want.id = service;
+    want.optional = 7;
+    manifest.services.consumes.items = &want;
+    manifest.services.consumes.count = 1;
+    CHECK(weivel_register_manifest(core, &manifest, &plugin, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(carried_whole(core, service) == 1);
+    want.optional = 0;
+    weivel_number numbers[2] = {WEIVEL_INIT(weivel_number), WEIVEL_INIT(weivel_number)};
+    numbers[0].name = value;
+    numbers[1].name = value;
+    want.constraints.items = numbers;
+    want.constraints.count = 2;
+    CHECK(weivel_register_manifest(core, &manifest, &plugin, NULL) == WEIVEL_STATUS_REFUSED);
+    weivel_event constraints = WEIVEL_INIT(weivel_event);
+    CHECK(weivel_next_event(core, &constraints, NULL) == WEIVEL_STATUS_OK);
+    CHECK(constraints.kind == WEIVEL_EVENT_REFUSAL && strstr(constraints.data.refusal.detail, service) != NULL &&
+          strstr(constraints.data.refusal.detail, value) != NULL);
+    weivel_event_release(&constraints);
+    manifest.services.consumes.count = 0;
+
+    weivel_service_offer offer = WEIVEL_INIT(weivel_service_offer);
+    offer.id = service;
+    offer.attributes.items = numbers;
+    offer.attributes.count = 2;
+    manifest.services.provides.items = &offer;
+    manifest.services.provides.count = 1;
+    CHECK(weivel_register_manifest(core, &manifest, &plugin, NULL) == WEIVEL_STATUS_REFUSED);
+    weivel_event attributes = WEIVEL_INIT(weivel_event);
+    CHECK(weivel_next_event(core, &attributes, NULL) == WEIVEL_STATUS_OK);
+    CHECK(attributes.kind == WEIVEL_EVENT_REFUSAL && strstr(attributes.data.refusal.detail, service) != NULL &&
+          strstr(attributes.data.refusal.detail, value) != NULL);
+    weivel_event_release(&attributes);
+    free(service);
+    free(value);
+    free(name);
+    weivel_core_destroy(core);
+}
+
+static void a_long_text_is_never_cut_from_a_registry_refusal(void) {
+    char *known_first = repeated('k', 1000, "known");
+    char *known_last = repeated('l', 1000, "last");
+    const char *known[] = {known_first, known_last};
+    weivel_core *core = core_knowing(known, 2);
+    char *outside = repeated('o', 1000, "outside:");
+    char *owned = repeated('w', 1000, "owner:");
+    char *identity = repeated('i', 1000, "who");
+    char *later = repeated('t', 1000, "owner:");
+    plugin_spec owner = {.identity = identity, .import_name = "owner"};
+    weivel_handle provider = open_spec(core, &owner);
+    plugin_spec rival_spec = {.identity = "rival"};
+    weivel_handle rival = open_spec(core, &rival_spec);
+    forget(core);
+
+    weivel_handle registration = 0;
+    CHECK(weivel_register_service(core, provider, outside, &registration, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(carried_whole(core, outside) == 1);
+    CHECK(weivel_register_service(core, provider, outside, &registration, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(carried_whole(core, known_last) == 1);
+    register_service(core, provider, known_first);
+    forget(core);
+    CHECK(weivel_register_service(core, rival, known_first, &registration, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(carried_whole(core, identity) == 1);
+    CHECK(weivel_register_service(core, rival, known_first, &registration, NULL) == WEIVEL_STATUS_REFUSED);
+    CHECK(carried_whole(core, known_first) == 1);
+
+    plugin_spec waiting_spec = {.identity = "waiting", .consumes = {owned, later}};
+    weivel_handle waiting = open_spec(core, &waiting_spec);
+    want_within(core, waiting, owned, 0, 5);
+    CHECK(weivel_advance(core, 5, NULL) == WEIVEL_STATUS_OK);
+    CHECK(carried_whole(core, owned) == 1);
+
+    weivel_handle watch = 0;
+    CHECK(weivel_watch_service(core, waiting, later, &watch, NULL) == WEIVEL_STATUS_OK);
+    core->registry->fail_next_holding = true;
+    weivel_handle arrived = 0;
+    CHECK(weivel_register_service(core, provider, later, &arrived, NULL) == WEIVEL_STATUS_OK);
+    CHECK(carried_whole(core, later) == 1);
+    free(later);
+    free(identity);
+    free(owned);
+    free(outside);
+    weivel_core_destroy(core);
+    free(known_last);
+    free(known_first);
+}
+
+static void a_long_id_is_never_cut_from_an_unpolled_want(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    char *service = repeated('c', 1000, "far:");
+    weivel_number constraint = WEIVEL_INIT(weivel_number);
+    constraint.name = "latency";
+    constraint.value = 5;
+    weivel_service_want want = WEIVEL_INIT(weivel_service_want);
+    want.id = service;
+    want.constraints.items = &constraint;
+    want.constraints.count = 1;
+    weivel_manifest manifest = WEIVEL_INIT(weivel_manifest);
+    manifest.import_name = "picky";
+    manifest.api = 1;
+    manifest.services.consumes.items = &want;
+    manifest.services.consumes.count = 1;
+    weivel_handle plugin = 0;
+    CHECK(weivel_register_manifest(core, &manifest, &plugin, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_open_plugin(core, plugin, NULL, NULL) == WEIVEL_STATUS_OK);
+    forget(core);
+    weivel_handle handle = 0;
+    CHECK(weivel_want_service(core, plugin, service, NULL, &handle, NULL) == WEIVEL_STATUS_MALFORMED);
+    CHECK(carried_whole(core, service) == 1);
+    free(service);
+    weivel_core_destroy(core);
+}
+
 int main(void) {
     delivers_a_late_registration_from_the_named_provider_to_a_want();
     delivers_a_late_registration_from_the_named_provider_to_a_watch();
@@ -628,5 +833,9 @@ int main(void) {
     late_calls_are_logged_and_never_reported();
     refusal_texts_name_the_services_it_consumes();
     a_long_id_is_never_cut_from_a_reach_refusal();
+    a_long_name_is_never_cut_from_a_plugin_refusal();
+    a_long_text_is_never_cut_from_a_manifest_refusal();
+    a_long_text_is_never_cut_from_a_registry_refusal();
+    a_long_id_is_never_cut_from_an_unpolled_want();
     return check_summary("reach_test");
 }

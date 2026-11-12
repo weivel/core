@@ -262,21 +262,15 @@ static weivel_status refuse_mismatch(weivel_core *core, weivel_plugin *plugin, b
     } else {
         find_extra(plugin, &mismatch, length + 1);
     }
-    size_t fix_capacity = 2 * strlen(mismatch.first) + 128;
-    char *fix = malloc(fix_capacity);
+    char *fix = missing ? weivel_text_format("provide \"%s\" while the plugin activates, or remove \"%s\" from the "
+                                             "capabilities it provides in its manifest",
+                                             mismatch.first, mismatch.first)
+                        : weivel_text_format("add \"%s\" to the capabilities it provides in its manifest, or stop "
+                                             "providing \"%s\"",
+                                             mismatch.first, mismatch.first);
     if (fix == NULL) {
         free(detail);
         return WEIVEL_STATUS_OUT_OF_MEMORY;
-    }
-    if (missing) {
-        snprintf(fix, fix_capacity,
-                 "provide \"%s\" while the plugin activates, or remove \"%s\" from the capabilities it provides in its "
-                 "manifest",
-                 mismatch.first, mismatch.first);
-    } else {
-        snprintf(fix, fix_capacity,
-                 "add \"%s\" to the capabilities it provides in its manifest, or stop providing \"%s\"",
-                 mismatch.first, mismatch.first);
     }
     weivel_ledger_note_refused_activation(core, plugin, WEIVEL_REFUSAL_ACTIVATION_MISMATCH, detail, fix);
     weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_ACTIVATION_MISMATCH, detail, fix);

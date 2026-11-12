@@ -59,6 +59,33 @@ void weivel_kept_refusal_clear(weivel_kept_refusal *refusal) {
     memset(refusal, 0, sizeof *refusal);
 }
 
+bool weivel_kept_refusal_held(const weivel_kept_refusal *refusal) {
+    return refusal->detail != NULL;
+}
+
+static char *copy_text(const char *text) {
+    size_t length = strlen(text) + 1;
+    char *copy = malloc(length);
+    if (copy != NULL) {
+        memcpy(copy, text, length);
+    }
+    return copy;
+}
+
+bool weivel_kept_refusal_copy(weivel_kept_refusal *kept, uint32_t code, const char *detail, const char *fix) {
+    char *detail_copy = copy_text(detail);
+    char *fix_copy = copy_text(fix);
+    if (detail_copy == NULL || fix_copy == NULL) {
+        free(detail_copy);
+        free(fix_copy);
+        return false;
+    }
+    kept->code = code;
+    kept->detail = detail_copy;
+    kept->fix = fix_copy;
+    return true;
+}
+
 static weivel_ids *relationship_of(weivel_plugin *plugin, uint32_t relationship) {
     switch (relationship) {
     case WEIVEL_RELATIONSHIP_SERVICE_PROVIDED:
@@ -82,6 +109,7 @@ void weivel_ledger_begin_activation(weivel_plugin *plugin) {
     weivel_ids_clear(&plugin->services_consumed);
     plugin->verified = false;
     weivel_kept_refusal_clear(&plugin->activation_refusal);
+    weivel_kept_refusal_clear(&plugin->quarantine_reason);
 }
 
 void weivel_ledger_note_verified(weivel_plugin *plugin) {
@@ -89,30 +117,13 @@ void weivel_ledger_note_verified(weivel_plugin *plugin) {
     weivel_kept_refusal_clear(&plugin->activation_refusal);
 }
 
-static char *copy_text(const char *text) {
-    size_t length = strlen(text) + 1;
-    char *copy = malloc(length);
-    if (copy != NULL) {
-        memcpy(copy, text, length);
-    }
-    return copy;
-}
-
 void weivel_ledger_note_refused_activation(weivel_core *core, weivel_plugin *plugin, uint32_t code,
                                            const char *detail, const char *fix) {
     weivel_kept_refusal_clear(&plugin->activation_refusal);
-    char *detail_copy = copy_text(detail);
-    char *fix_copy = copy_text(fix);
-    if (detail_copy == NULL || fix_copy == NULL) {
-        free(detail_copy);
-        free(fix_copy);
+    if (!weivel_kept_refusal_copy(&plugin->activation_refusal, code, detail, fix)) {
         weivel_core_log(core, WEIVEL_LOG_ERROR,
                         "memory ran out recording why an activation was refused, so the ledger misses it");
-        return;
     }
-    plugin->activation_refusal.code = code;
-    plugin->activation_refusal.detail = detail_copy;
-    plugin->activation_refusal.fix = fix_copy;
 }
 
 void weivel_ledger_free_plugin(weivel_plugin *plugin) {
@@ -120,6 +131,7 @@ void weivel_ledger_free_plugin(weivel_plugin *plugin) {
     weivel_ids_clear(&plugin->capabilities_provided);
     weivel_ids_clear(&plugin->services_consumed);
     weivel_kept_refusal_clear(&plugin->activation_refusal);
+    weivel_kept_refusal_clear(&plugin->quarantine_reason);
 }
 
 /**
@@ -182,8 +194,10 @@ static uint32_t status_of(const weivel_plugin *plugin) {
 
 static void put_refusal(weivel_layout *layout, const weivel_plugin *plugin, weivel_refusal *refusal) {
     memset(refusal, 0, sizeof *refusal);
-    const weivel_kept_refusal *kept = &plugin->activation_refusal;
-    if (plugin->state != WEIVEL_PLUGIN_QUARANTINED || kept->code == WEIVEL_REFUSAL_NONE) {
+    const weivel_kept_refusal *kept = weivel_kept_refusal_held(&plugin->quarantine_reason)
+                                          ? &plugin->quarantine_reason
+                                          : &plugin->activation_refusal;
+    if (plugin->state != WEIVEL_PLUGIN_QUARANTINED || !weivel_kept_refusal_held(kept)) {
         return;
     }
     refusal->code = kept->code;

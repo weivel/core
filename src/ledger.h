@@ -29,6 +29,12 @@ typedef struct weivel_kept_refusal {
 
 void weivel_kept_refusal_clear(weivel_kept_refusal *refusal);
 
+/** Whether a kept refusal holds one; its code may be NONE when the caller gave no code. */
+bool weivel_kept_refusal_held(const weivel_kept_refusal *refusal);
+
+/** Copies a refusal's texts into `kept`, which must be empty; false, with `kept` still empty, when memory runs out. */
+bool weivel_kept_refusal_copy(weivel_kept_refusal *kept, uint32_t code, const char *detail, const char *fix);
+
 /** A relationship the ledger records for a plugin. */
 typedef enum weivel_relationship {
     WEIVEL_RELATIONSHIP_SERVICE_PROVIDED = 1,

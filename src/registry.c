@@ -7,6 +7,7 @@
 
 #include "core_internal.h"
 #include "sized.h"
+#include "text.h"
 
 weivel_registry *weivel_registry_create(void) {
     weivel_registry *registry = calloc(1, sizeof *registry);
@@ -165,9 +166,11 @@ static void revoke_holding(weivel_core *core, weivel_holding *holding) {
 }
 
 static void log_unheld(weivel_core *core, const char *id) {
-    char text[384];
-    snprintf(text, sizeof text, "memory ran out recording who holds service \"%s\", so it was not handed over", id);
-    weivel_core_log(core, WEIVEL_LOG_ERROR, text);
+    char *text =
+        weivel_text_format("memory ran out recording who holds service \"%s\", so it was not handed over", id);
+    weivel_core_log(core, WEIVEL_LOG_ERROR,
+                    text == NULL ? "memory ran out recording who holds a service, so it was not handed over" : text);
+    free(text);
 }
 
 static void tell_watchers(weivel_core *core, weivel_registration *registration, uint32_t change) {
@@ -247,12 +250,32 @@ static bool in_namespace(const weivel_plugin *plugin, const char *id) {
     return strlen(namespace_name) == length && memcmp(namespace_name, id, length) == 0;
 }
 
-static void list_well_known(const weivel_core *core, char *text, size_t capacity) {
-    size_t used = (size_t)snprintf(text, capacity, "%s", core->well_known.count == 0 ? "(none)" : "");
-    for (uint32_t index = 0; index < core->well_known.count && used < capacity; index++) {
-        used += (size_t)snprintf(text + used, capacity - used, "%s%s", index == 0 ? "" : ", ",
-                                 core->well_known.items[index]);
+/** Every id any plugin may register, joined by ", ", or "(none)"; NULL when memory runs out. */
+static char *join_well_known(const weivel_core *core) {
+    size_t length = core->well_known.count == 0 ? strlen("(none)") : 0;
+    for (uint32_t index = 0; index < core->well_known.count; index++) {
+        length += strlen(core->well_known.items[index]) + (index == 0 ? 0 : 2);
     }
+    char *text = malloc(length + 1);
+    if (text == NULL) {
+        return NULL;
+    }
+    char *cursor = text;
+    if (core->well_known.count == 0) {
+        memcpy(cursor, "(none)", 6);
+        cursor += 6;
+    }
+    for (uint32_t index = 0; index < core->well_known.count; index++) {
+        if (index > 0) {
+            memcpy(cursor, ", ", 2);
+            cursor += 2;
+        }
+        size_t part = strlen(core->well_known.items[index]);
+        memcpy(cursor, core->well_known.items[index], part);
+        cursor += part;
+    }
+    *cursor = '\0';
+    return text;
 }
 
 static weivel_status refuse_namespace(weivel_core *core, const weivel_plugin *plugin, const char *id) {
@@ -262,23 +285,32 @@ static weivel_status refuse_namespace(weivel_core *core, const weivel_plugin *pl
             name = cursor + 1;
         }
     }
-    char known[256];
-    list_well_known(core, known, sizeof known);
-    char detail[384];
-    char fix[768];
-    snprintf(detail, sizeof detail, "cannot register service \"%s\", which is outside this plugin's namespace", id);
-    snprintf(fix, sizeof fix, "register it as \"%s:%s\", or as one of the well-known ids: %s",
-             plugin->manifest.value.import_name, name, known);
-    weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_OUTSIDE_NAMESPACE, detail, fix);
-    return WEIVEL_STATUS_REFUSED;
+    char *known = join_well_known(core);
+    char *detail =
+        weivel_text_format("cannot register service \"%s\", which is outside this plugin's namespace", id);
+    char *fix = known == NULL ? NULL
+                              : weivel_text_format("register it as \"%s:%s\", or as one of the well-known ids: %s",
+                                                   plugin->manifest.value.import_name, name, known);
+    weivel_status status = WEIVEL_STATUS_OUT_OF_MEMORY;
+    if (detail != NULL && fix != NULL) {
+        weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_OUTSIDE_NAMESPACE, detail, fix);
+        status = WEIVEL_STATUS_REFUSED;
+    }
+    free(fix);
+    free(detail);
+    free(known);
+    return status;
 }
 
 static weivel_status refuse_taken(weivel_core *core, const weivel_registration *holder) {
-    char detail[384];
-    snprintf(detail, sizeof detail, "service \"%s\" is already registered by %s", holder->slot->id,
-             weivel_registry_owner_name(holder));
+    char *detail = weivel_text_format("service \"%s\" is already registered by %s", holder->slot->id,
+                                      weivel_registry_owner_name(holder));
+    if (detail == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
     weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_SERVICE_TAKEN, detail,
                                "disable one of the two plugins, or have each register its own namespaced id");
+    free(detail);
     return WEIVEL_STATUS_REFUSED;
 }
 
@@ -427,6 +459,14 @@ weivel_status weivel_unregister(weivel_core *core, weivel_handle handle, uint32_
     return status;
 }
 
+/** Checks reach for an attempt that needs no refusal texts, since the check reported them already. */
+static weivel_reach reach_without_texts(weivel_core *core, weivel_plugin *plugin, const char *id) {
+    weivel_reach reach;
+    weivel_reach_check(core, plugin, id, &reach);
+    weivel_reach_dispose(&reach);
+    return reach;
+}
+
 static weivel_status get_service(weivel_core *core, weivel_handle consumer, const char *id,
                                  weivel_handle *implementation) {
     weivel_plugin *plugin;
@@ -434,9 +474,7 @@ static weivel_status get_service(weivel_core *core, weivel_handle consumer, cons
     if (status != WEIVEL_STATUS_OK) {
         return status;
     }
-    weivel_reach reach;
-    weivel_reach_check(core, plugin, id, &reach);
-    weivel_reach_dispose(&reach);
+    weivel_reach reach = reach_without_texts(core, plugin, id);
     if (reach.code != WEIVEL_REFUSAL_NONE) {
         return WEIVEL_STATUS_REFUSED;
     }
@@ -505,9 +543,7 @@ static weivel_status watch_service(weivel_core *core, weivel_handle consumer, co
     if (status != WEIVEL_STATUS_OK) {
         return status;
     }
-    weivel_reach reach;
-    weivel_reach_check(core, plugin, id, &reach);
-    weivel_reach_dispose(&reach);
+    weivel_reach reach = reach_without_texts(core, plugin, id);
     if (reach.code != WEIVEL_REFUSAL_NONE) {
         return WEIVEL_STATUS_REFUSED;
     }

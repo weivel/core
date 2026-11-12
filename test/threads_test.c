@@ -38,6 +38,9 @@ typedef struct worker {
     uint32_t reach_refused;
     uint32_t refusals;
     uint32_t logs;
+    uint32_t capability_provided;
+    uint32_t capability_withdrawn;
+    uint32_t watched;
     uint32_t failures;
 } worker;
 
@@ -67,6 +70,13 @@ static void tally(worker *self, const weivel_event *event) {
         break;
     case WEIVEL_EVENT_LOG:
         self->logs++;
+        break;
+    case WEIVEL_EVENT_CAPABILITY:
+        self->capability_provided += event->data.capability.change == WEIVEL_CAPABILITY_PROVIDED;
+        self->capability_withdrawn += event->data.capability.change == WEIVEL_CAPABILITY_WITHDRAWN;
+        break;
+    case WEIVEL_EVENT_WATCH:
+        self->watched++;
         break;
     default:
         break;
@@ -140,9 +150,44 @@ static weivel_handle want(worker *self, weivel_handle plugin, const char *id) {
     return handle;
 }
 
+/** Reads the ledger while every other thread writes: this round's consumer is in it, active, under its name. */
+static void read_ledger(worker *self, weivel_handle consumer, const char *import_name) {
+    weivel_ledger_snapshot snapshot = WEIVEL_INIT(weivel_ledger_snapshot);
+    expect(self, weivel_ledger(self->core, &snapshot, NULL) == WEIVEL_STATUS_OK);
+    int found = 0;
+    for (uint32_t index = 0; index < snapshot.row_count; index++) {
+        const weivel_ledger_row *row = &snapshot.rows[index];
+        if (row->plugin == consumer) {
+            found++;
+            expect(self, row->status == WEIVEL_PLUGIN_STATUS_ACTIVE && strcmp(row->import_name, import_name) == 0);
+        }
+    }
+    expect(self, found == 1);
+    weivel_ledger_release(&snapshot);
+    weivel_ledger_row row = WEIVEL_INIT(weivel_ledger_row);
+    expect(self, weivel_ledger_entry(self->core, consumer, &row, NULL) == WEIVEL_STATUS_OK);
+    expect(self, row.status == WEIVEL_PLUGIN_STATUS_ACTIVE && strcmp(row.import_name, import_name) == 0);
+    weivel_ledger_row_release(&row);
+}
+
+/** Quarantines the consumer for a reason the test gives, then reads that reason back from its row. */
+static void quarantine(worker *self, weivel_handle consumer) {
+    weivel_quarantine_reason reason = WEIVEL_INIT(weivel_quarantine_reason);
+    reason.detail = "the round is over";
+    reason.fix = "start the next round";
+    expect(self, weivel_quarantine_plugin(self->core, consumer, &reason, NULL) == WEIVEL_STATUS_OK);
+    weivel_ledger_row row = WEIVEL_INIT(weivel_ledger_row);
+    expect(self, weivel_ledger_entry(self->core, consumer, &row, NULL) == WEIVEL_STATUS_OK);
+    expect(self, row.status == WEIVEL_PLUGIN_STATUS_QUARANTINED && row.refusal.detail != NULL &&
+                     strcmp(row.refusal.detail, "the round is over") == 0);
+    weivel_ledger_row_release(&row);
+}
+
 /**
- * One round: a provider and a consumer meet and part, every step followed by a drain. The consumer of the last
- * round stays open, its want for a service nothing provides still waiting, so the end state holds a pending want.
+ * One round: a provider and a consumer meet and part, every step followed by a drain. The consumer watches the
+ * service and stops watching, watches the capability for good, and is quarantined for a reason before it goes. The
+ * consumer of the last round stays open, its want for a service nothing provides still waiting and its capability
+ * watch still installed, so the end state holds both.
  */
 static void run_round(worker *self, int round) {
     names names;
@@ -152,6 +197,13 @@ static void run_round(worker *self, int round) {
     weivel_handle consumer = register_consumer(self, &names);
     want(self, consumer, names.service);
     weivel_handle never = want(self, consumer, names.never);
+    weivel_handle service_watch = 0;
+    expect(self, weivel_watch_service(core, consumer, names.service, &service_watch, NULL) == WEIVEL_STATUS_OK);
+    expect(self, weivel_unregister(core, service_watch, NULL) == WEIVEL_STATUS_OK);
+    weivel_handle capability_watch = 0;
+    expect(self, weivel_watch_capability(core, consumer, names.capability, &capability_watch, NULL) ==
+                     WEIVEL_STATUS_OK);
+    read_ledger(self, consumer, names.consumer);
     drain(self);
     weivel_handle registration = 0;
     expect(self, weivel_register_service(core, provider, names.service, &registration, NULL) == WEIVEL_STATUS_OK);
@@ -168,6 +220,8 @@ static void run_round(worker *self, int round) {
     expect(self, list.count == 1 && list.items != NULL && list.items[0].implementation == implementation);
     weivel_capability_list_release(&list);
     drain(self);
+    expect(self, weivel_unregister(core, registration, NULL) == WEIVEL_STATUS_OK);
+    read_ledger(self, consumer, names.consumer);
     expect(self, weivel_release_plugin(core, provider, NULL) == WEIVEL_STATUS_OK);
     expect(self, weivel_forget_plugin(core, provider, NULL) == WEIVEL_STATUS_OK);
     drain(self);
@@ -176,6 +230,7 @@ static void run_round(worker *self, int round) {
         self->kept_want = never;
         return;
     }
+    quarantine(self, consumer);
     expect(self, weivel_release_plugin(core, consumer, NULL) == WEIVEL_STATUS_OK);
     expect(self, weivel_forget_plugin(core, consumer, NULL) == WEIVEL_STATUS_OK);
     drain(self);
@@ -308,18 +363,19 @@ static void check_ledger(weivel_core *core, const worker *workers) {
     weivel_ledger_release(&snapshot);
 }
 
-static void check_census(weivel_core *core, uint32_t plugins, uint32_t live_handles, uint32_t slots) {
+/** Checks the census: `kept` consumers each still hold a plugin, a want and a capability watch, and nothing else. */
+static void check_census(weivel_core *core, const weivel_census *baseline, uint32_t kept) {
     weivel_census census;
     weivel_core_census(core, &census);
-    CHECK(census.plugins == plugins);
-    CHECK(census.live_handles == live_handles);
-    CHECK(census.slots == slots);
-    CHECK(census.holdings == 0);
-    CHECK(census.deadlines == 0);
-    CHECK(census.capabilities == 0);
-    CHECK(census.provisions == 0);
-    CHECK(census.capability_watches == 0);
-    CHECK(census.capability_holdings == 0);
+    CHECK(census.plugins == baseline->plugins + kept);
+    CHECK(census.live_handles == baseline->live_handles + 3 * kept);
+    CHECK(census.slots == baseline->slots + kept);
+    CHECK(census.holdings == baseline->holdings);
+    CHECK(census.deadlines == baseline->deadlines);
+    CHECK(census.capabilities == baseline->capabilities + kept);
+    CHECK(census.provisions == baseline->provisions);
+    CHECK(census.capability_watches == baseline->capability_watches + kept);
+    CHECK(census.capability_holdings == baseline->capability_holdings);
 }
 
 static void check_every_want_accounted_for(const worker *workers, const settlements *all, int kept_pending) {
@@ -368,11 +424,14 @@ static void threads_meeting_and_parting_on_one_core_leave_it_consistent(void) {
     CHECK(sum(workers, rest, offsetof(worker, reach_refused)) == THREADS * ROUNDS);
     CHECK(sum(workers, rest, offsetof(worker, refusals)) == 0);
     CHECK(sum(workers, rest, offsetof(worker, logs)) == 0);
+    CHECK(sum(workers, rest, offsetof(worker, capability_provided)) == THREADS * ROUNDS);
+    CHECK(sum(workers, rest, offsetof(worker, capability_withdrawn)) == THREADS * ROUNDS);
+    CHECK(sum(workers, rest, offsetof(worker, watched)) == 0);
     settlements pending = gather(workers, rest);
     check_every_want_accounted_for(workers, &pending, 1);
     free(pending.items);
     check_ledger(core, workers);
-    check_census(core, THREADS, 2 * THREADS, THREADS);
+    check_census(core, &baseline, THREADS);
 
     for (int thread = 0; thread < THREADS; thread++) {
         CHECK(weivel_release_plugin(core, workers[thread].kept_consumer, NULL) == WEIVEL_STATUS_OK);
@@ -382,7 +441,7 @@ static void threads_meeting_and_parting_on_one_core_leave_it_consistent(void) {
     settlements all = gather(workers, rest);
     check_every_want_accounted_for(workers, &all, 0);
     free(all.items);
-    check_census(core, baseline.plugins, baseline.live_handles, baseline.slots);
+    check_census(core, &baseline, 0);
 
     weivel_ledger_snapshot snapshot = WEIVEL_INIT(weivel_ledger_snapshot);
     CHECK(weivel_ledger(core, &snapshot, NULL) == WEIVEL_STATUS_OK);
