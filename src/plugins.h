@@ -73,6 +73,7 @@ typedef struct weivel_plugin {
     /** Its provisions, in the order provided. */
     weivel_link provisions;
     weivel_link capability_watches;
+    weivel_link capability_holdings;
 } weivel_plugin;
 
 /** Every plugin record one core owns; the handle table only borrows them. */

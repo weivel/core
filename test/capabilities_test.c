@@ -770,6 +770,102 @@ static void malformed_and_refused_calls_are_values(void) {
     weivel_core_destroy(core);
 }
 
+static uint32_t holdings_now(weivel_core *core) {
+    weivel_census census;
+    weivel_core_census(core, &census);
+    return census.capability_holdings;
+}
+
+/** A holder is told once when its provider is quarantined, and the release after it tells nobody again. */
+static void a_holder_is_revoked_once_when_its_provider_is_quarantined(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    weivel_handle agenda = open_capabilities(core, "agenda", NONE, SCREENS);
+    weivel_handle calendar = open_capabilities(core, "calendar", SCREENS, NONE);
+    weivel_handle implementation = provide(core, calendar, "screens");
+    CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    CHECK(count_all(core, agenda, "screens") == 1);
+    CHECK(count_all(core, agenda, "screens") == 1);
+    CHECK(holdings_now(core) == 1);
+    forget(core);
+    CHECK(weivel_quarantine_plugin(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_release_plugin(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(count_kind(WEIVEL_EVENT_REVOKED) == 1);
+    CHECK(revocations_to(agenda, implementation) == 1);
+    CHECK(holdings_now(core) == 0);
+    weivel_core_destroy(core);
+}
+
+/** A plugin that holds and watches hears the revocation first, then the watch's withdrawal, each once. */
+static void a_holder_that_watches_hears_both_when_its_provider_is_released(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    weivel_handle agenda = open_capabilities(core, "agenda", NONE, SCREENS);
+    weivel_handle bystander = open_capabilities(core, "bystander", NONE, SCREENS);
+    weivel_handle calendar = open_capabilities(core, "calendar", SCREENS, NONE);
+    weivel_handle watch = watch_capability(core, agenda, "screens");
+    weivel_handle implementation = provide(core, calendar, "screens");
+    CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    CHECK(count_all(core, agenda, "screens") == 1);
+    forget(core);
+    CHECK(weivel_release_plugin(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(the_journal.count == 2);
+    CHECK(the_journal.items[0].kind == WEIVEL_EVENT_REVOKED);
+    CHECK(revocations_to(agenda, implementation) == 1);
+    CHECK(revocations_to(bystander, implementation) == 0);
+    CHECK(the_journal.items[1].kind == WEIVEL_EVENT_CAPABILITY);
+    CHECK(capability_events(watch, WEIVEL_CAPABILITY_WITHDRAWN) == 1);
+    weivel_core_destroy(core);
+}
+
+/**
+ * A released holder has what it holds revoked to it as it is released, and hears nothing when the provider goes
+ * later. Its late `all` holds again, revoked to it when it is forgotten.
+ */
+static void a_released_holder_hears_nothing_later(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    weivel_handle agenda = open_capabilities(core, "agenda", NONE, SCREENS);
+    weivel_handle notes = open_capabilities(core, "notes", NONE, SCREENS);
+    weivel_handle calendar = open_capabilities(core, "calendar", SCREENS, NONE);
+    weivel_handle implementation = provide(core, calendar, "screens");
+    CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    CHECK(count_all(core, agenda, "screens") == 1);
+    CHECK(count_all(core, notes, "screens") == 1);
+    forget(core);
+    CHECK(weivel_release_plugin(core, agenda, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(count_kind(WEIVEL_EVENT_REVOKED) == 1 && revocations_to(agenda, implementation) == 1);
+    CHECK(count_all(core, agenda, "screens") == 1);
+    CHECK(weivel_forget_plugin(core, agenda, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(revocations_to(agenda, implementation) == 2);
+    forget(core);
+    CHECK(weivel_release_plugin(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(count_kind(WEIVEL_EVENT_REVOKED) == 1 && revocations_to(notes, implementation) == 1);
+    CHECK(holdings_now(core) == 0);
+    weivel_core_destroy(core);
+}
+
+/** A holding the core cannot record hands nothing over, so no revocation is ever owed for it. */
+static void an_all_that_cannot_record_its_holding_hands_nothing_over(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    weivel_handle agenda = open_capabilities(core, "agenda", NONE, SCREENS);
+    weivel_handle calendar = open_capabilities(core, "calendar", SCREENS, NONE);
+    provide(core, calendar, "screens");
+    CHECK(weivel_verify_activation(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    core->registry->fail_next_holding = true;
+    weivel_capability_list list = WEIVEL_INIT(weivel_capability_list);
+    CHECK(weivel_capability_all(core, agenda, "screens", &list, NULL) == WEIVEL_STATUS_OUT_OF_MEMORY);
+    CHECK(list.count == 0 && list.storage == NULL);
+    CHECK(holdings_now(core) == 0);
+    forget(core);
+    CHECK(weivel_release_plugin(core, calendar, NULL) == WEIVEL_STATUS_OK);
+    drain(core);
+    CHECK(count_kind(WEIVEL_EVENT_REVOKED) == 0);
+    weivel_core_destroy(core);
+}
+
 static void churn_round(weivel_core *core, weivel_handle consumer) {
     weivel_handle provider = open_capabilities(core, "churn", SCREENS, SCREENS);
     provide(core, provider, "screens");
@@ -786,7 +882,7 @@ static void churn_round(weivel_core *core, weivel_handle consumer) {
 static bool same_capability_counts(const weivel_census *left, const weivel_census *right) {
     return left->plugins == right->plugins && left->capabilities == right->capabilities &&
            left->provisions == right->provisions && left->capability_watches == right->capability_watches &&
-           left->live_handles == right->live_handles;
+           left->capability_holdings == right->capability_holdings && left->live_handles == right->live_handles;
 }
 
 /** Providers come and go thousands of times under one consumer's watch, and leave the core no larger. */
@@ -810,6 +906,7 @@ static void churn_leaves_no_capability_behind(void) {
     }
     CHECK(drifted == 0);
     CHECK(before.capabilities == 1 && before.provisions == 0 && before.capability_watches == 1);
+    CHECK(before.capability_holdings == 0);
     weivel_core_destroy(core);
 }
 
@@ -876,6 +973,10 @@ int main(void) {
     a_reopened_provider_rejoins_once_verified_again();
     a_service_and_a_capability_of_one_id_are_reported_apart();
     malformed_and_refused_calls_are_values();
+    a_holder_is_revoked_once_when_its_provider_is_quarantined();
+    a_holder_that_watches_hears_both_when_its_provider_is_released();
+    a_released_holder_hears_nothing_later();
+    an_all_that_cannot_record_its_holding_hands_nothing_over();
     churn_leaves_no_capability_behind();
     many_providers_keep_verify_order();
     return check_summary("capabilities_test");

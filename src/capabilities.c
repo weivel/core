@@ -1,5 +1,6 @@
 #include "capabilities.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,18 +15,30 @@ weivel_capabilities *weivel_capabilities_create(void) {
     }
     weivel_list_init(&capabilities->all);
     capabilities->by_id = weivel_table_create();
-    if (capabilities->by_id == NULL) {
+    capabilities->holdings = weivel_table_create();
+    if (capabilities->by_id == NULL || capabilities->holdings == NULL) {
+        weivel_table_destroy(capabilities->by_id);
+        weivel_table_destroy(capabilities->holdings);
         free(capabilities);
         return NULL;
     }
     return capabilities;
 }
 
+static void free_provision(weivel_provision *provision) {
+    while (!weivel_list_empty(&provision->holdings)) {
+        weivel_link *link = provision->holdings.next;
+        weivel_list_remove(link);
+        free(WEIVEL_RECORD_OF(link, weivel_capability_holding, by_provision));
+    }
+    free(provision);
+}
+
 static void free_capability(weivel_capability *capability) {
     while (!weivel_list_empty(&capability->provided)) {
         weivel_link *link = capability->provided.next;
         weivel_list_remove(link);
-        free(WEIVEL_RECORD_OF(link, weivel_provision, by_capability));
+        free_provision(WEIVEL_RECORD_OF(link, weivel_provision, by_capability));
     }
     while (!weivel_list_empty(&capability->watchers)) {
         weivel_link *link = capability->watchers.next;
@@ -45,6 +58,7 @@ void weivel_capabilities_destroy(weivel_capabilities *capabilities) {
         free_capability(WEIVEL_RECORD_OF(link, weivel_capability, in_capabilities));
     }
     weivel_table_destroy(capabilities->by_id);
+    weivel_table_destroy(capabilities->holdings);
     free(capabilities);
 }
 
@@ -100,15 +114,34 @@ static void tell_watchers(weivel_core *core, const weivel_provision *provision, 
     }
 }
 
+/** Formats into an allocation of exactly the size needed, so a long id is never cut; NULL when memory runs out. */
+static char *formatted(const char *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    va_list measuring;
+    va_copy(measuring, arguments);
+    int length = vsnprintf(NULL, 0, format, measuring);
+    va_end(measuring);
+    char *text = length < 0 ? NULL : malloc((size_t)length + 1);
+    if (text != NULL) {
+        vsnprintf(text, (size_t)length + 1, format, arguments);
+    }
+    va_end(arguments);
+    return text;
+}
+
 static bool is_id(const char *id) {
     return id != NULL && id[0] != '\0';
 }
 
 static weivel_status refuse_provided_twice(weivel_core *core, const char *id) {
-    char detail[384];
-    snprintf(detail, sizeof detail, "provided capability \"%s\" twice", id);
+    char *detail = formatted("provided capability \"%s\" twice", id);
+    if (detail == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
     weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_PROVIDED_TWICE, detail,
                                "provide each capability once while the plugin activates");
+    free(detail);
     return WEIVEL_STATUS_REFUSED;
 }
 
@@ -137,6 +170,7 @@ static weivel_status add_provision(weivel_core *core, weivel_plugin *plugin, con
     provision->capability = capability;
     provision->provider = plugin;
     weivel_list_init(&provision->in_verified);
+    weivel_list_init(&provision->holdings);
     weivel_list_append(&capability->provided, &provision->by_capability);
     weivel_list_append(&plugin->provisions, &provision->by_provider);
     capabilities->provision_count++;
@@ -279,12 +313,15 @@ static void admit(weivel_core *core, weivel_plugin *plugin) {
 
 static weivel_status refuse_not_open(weivel_core *core, const weivel_plugin *plugin) {
     bool released = plugin->state == WEIVEL_PLUGIN_RELEASED;
-    char detail[384];
-    snprintf(detail, sizeof detail, "the plugin \"%s\" %s", plugin->manifest.value.import_name,
-             released ? "was released" : "is quarantined");
+    char *detail = formatted("the plugin \"%s\" %s", plugin->manifest.value.import_name,
+                             released ? "was released" : "is quarantined");
+    if (detail == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
     weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_PLUGIN_STATE, detail,
                                released ? "register its manifest again, and use the handle that answers"
                                         : "open it again, and verify the activation that follows");
+    free(detail);
     return WEIVEL_STATUS_REFUSED;
 }
 
@@ -319,6 +356,90 @@ weivel_status weivel_verify_activation(weivel_core *core, weivel_handle plugin, 
     weivel_status status = verify(core, plugin);
     weivel_core_report_pending(core, pending_events);
     weivel_mutex_unlock(core->mutex);
+    return status;
+}
+
+static weivel_capability_holding_key holding_key(const weivel_provision *provision, const weivel_plugin *plugin) {
+    weivel_capability_holding_key key;
+    memset(&key, 0, sizeof key);
+    key.provision = provision->handle;
+    key.plugin = plugin->handle;
+    return key;
+}
+
+/** Records that `plugin` holds `provision`, once however often; `*created` says whether this call made it. */
+static weivel_capability_holding *hold(weivel_core *core, weivel_provision *provision, weivel_plugin *plugin,
+                                       bool *created) {
+    weivel_capabilities *capabilities = core->capabilities;
+    weivel_capability_holding_key key = holding_key(provision, plugin);
+    weivel_capability_holding *holding = weivel_table_find(capabilities->holdings, &key, sizeof key);
+    *created = false;
+    if (holding != NULL) {
+        return holding;
+    }
+    if (core->registry->fail_next_holding) {
+        core->registry->fail_next_holding = false;
+        return NULL;
+    }
+    holding = calloc(1, sizeof *holding);
+    if (holding == NULL) {
+        return NULL;
+    }
+    holding->key = key;
+    holding->provision = provision;
+    holding->plugin = plugin;
+    if (weivel_table_add(capabilities->holdings, &holding->key, sizeof holding->key, holding) != WEIVEL_STATUS_OK) {
+        free(holding);
+        return NULL;
+    }
+    weivel_list_append(&provision->holdings, &holding->by_provision);
+    weivel_list_append(&plugin->capability_holdings, &holding->by_plugin);
+    capabilities->holding_count++;
+    *created = true;
+    return holding;
+}
+
+static void end_holding(weivel_core *core, weivel_capability_holding *holding) {
+    weivel_table_remove(core->capabilities->holdings, &holding->key, sizeof holding->key);
+    weivel_list_remove(&holding->by_provision);
+    weivel_list_remove(&holding->by_plugin);
+    core->capabilities->holding_count--;
+    free(holding);
+}
+
+static void revoke_holding(weivel_core *core, weivel_capability_holding *holding) {
+    weivel_revoked_event revoked = {holding->plugin->handle, holding->provision->handle};
+    weivel_events_push_revoked(core->events, &revoked);
+    end_holding(core, holding);
+}
+
+/**
+ * Records that `plugin` holds every verified implementation of `capability`, or, when one cannot be recorded, ends
+ * every holding this call made, so nothing is handed over that would never be revoked.
+ */
+static weivel_status hold_all(weivel_core *core, const weivel_capability *capability, weivel_plugin *plugin,
+                              uint32_t count) {
+    weivel_capability_holding **made = malloc(count == 0 ? 1 : (size_t)count * sizeof *made);
+    if (made == NULL) {
+        return WEIVEL_STATUS_OUT_OF_MEMORY;
+    }
+    uint32_t made_count = 0;
+    weivel_status status = WEIVEL_STATUS_OK;
+    for (const weivel_link *link = capability == NULL ? NULL : capability->verified.next;
+         status == WEIVEL_STATUS_OK && link != NULL && link != &capability->verified; link = link->next) {
+        bool created;
+        weivel_capability_holding *holding =
+            hold(core, WEIVEL_RECORD_OF(link, weivel_provision, in_verified), plugin, &created);
+        if (holding == NULL) {
+            status = WEIVEL_STATUS_OUT_OF_MEMORY;
+        } else if (created) {
+            made[made_count++] = holding;
+        }
+    }
+    while (status != WEIVEL_STATUS_OK && made_count > 0) {
+        end_holding(core, made[--made_count]);
+    }
+    free((void *)made);
     return status;
 }
 
@@ -366,7 +487,14 @@ static weivel_status all(weivel_core *core, weivel_handle consumer, const char *
     answer.items = NULL;
     answer.count = 0;
     answer.storage = NULL;
-    status = fill_all(find_capability(core->capabilities, id), &answer);
+    const weivel_capability *capability = find_capability(core->capabilities, id);
+    status = fill_all(capability, &answer);
+    if (status == WEIVEL_STATUS_OK) {
+        status = hold_all(core, capability, plugin, answer.count);
+        if (status != WEIVEL_STATUS_OK) {
+            free(answer.storage);
+        }
+    }
     if (status == WEIVEL_STATUS_OK) {
         weivel_sized_write(list, &answer, sizeof answer);
     }
@@ -495,6 +623,9 @@ bool weivel_capabilities_end_watch(weivel_core *core, weivel_handle handle) {
 
 static void withdraw(weivel_core *core, weivel_provision *provision) {
     weivel_capability *capability = provision->capability;
+    while (!weivel_list_empty(&provision->holdings)) {
+        revoke_holding(core, WEIVEL_RECORD_OF(provision->holdings.next, weivel_capability_holding, by_provision));
+    }
     if (provision->verified) {
         weivel_list_remove(&provision->in_verified);
         provision->verified = false;
@@ -515,5 +646,9 @@ void weivel_capabilities_strip(weivel_core *core, weivel_plugin *plugin) {
     }
     while (!weivel_list_empty(&plugin->capability_watches)) {
         stop_watch(core, WEIVEL_RECORD_OF(plugin->capability_watches.next, weivel_capability_watch, by_consumer));
+    }
+    while (!weivel_list_empty(&plugin->capability_holdings)) {
+        revoke_holding(core,
+                       WEIVEL_RECORD_OF(plugin->capability_holdings.next, weivel_capability_holding, by_plugin));
     }
 }

@@ -179,6 +179,7 @@ void weivel_core_census(weivel_core *core, weivel_census *census) {
     census->capabilities = core->capabilities->count;
     census->provisions = core->capabilities->provision_count;
     census->capability_watches = core->capabilities->watch_count;
+    census->capability_holdings = core->capabilities->holding_count;
     weivel_mutex_unlock(core->mutex);
 }
 

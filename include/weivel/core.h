@@ -211,7 +211,10 @@ typedef struct weivel_watch_event {
     uint32_t change;
 } weivel_watch_event;
 
-/** A withdrawal: `plugin` held `implementation`, a registration handle that is gone. */
+/**
+ * A withdrawal: `plugin` held `implementation`, a service's registration handle or a capability's implementation
+ * handle, which is gone.
+ */
 typedef struct weivel_revoked_event {
     weivel_handle plugin;
     weivel_handle implementation;
@@ -765,12 +768,12 @@ WEIVEL_API weivel_status weivel_plugin_payload(weivel_core *core, weivel_handle 
                                                uint32_t *pending_events);
 
 /**
- * Releases a plugin, in one call: every capability implementation it provided is withdrawn, which each watch of
- * that capability hears as WEIVEL_CAPABILITY_WITHDRAWN when the implementation was verified, its own watches
- * included; then its watches stop, everything it registered is unregistered (each holder told by a
- * WEIVEL_EVENT_REVOKED and each watch by a WEIVEL_EVENT_WATCH), every want it still waits on is rejected with
- * WEIVEL_REFUSAL_STOPPED, and every service it holds is revoked to it. Its import name and identity are free again
- * at once, so a plugin of the same name may be registered.
+ * Releases a plugin, in one call: every capability implementation it provided is withdrawn, revoked to each holder
+ * by a WEIVEL_EVENT_REVOKED and heard by each watch of that capability as WEIVEL_CAPABILITY_WITHDRAWN when it was
+ * verified, its own watches included; then its watches stop, everything it registered is unregistered (each holder
+ * told by a WEIVEL_EVENT_REVOKED and each watch by a WEIVEL_EVENT_WATCH), every want it still waits on is rejected
+ * with WEIVEL_REFUSAL_STOPPED, and every service and capability implementation it holds is revoked to it. Its
+ * import name and identity are free again at once, so a plugin of the same name may be registered.
  *
  * The handle stays valid until weivel_forget_plugin, so a call the released plugin still makes is late: a `get` is
  * let through and starts a new holding, a `want` is rejected, a `watch` or a registration is refused with a log
@@ -1059,8 +1062,9 @@ WEIVEL_API weivel_status weivel_provide_capability(weivel_core *core, weivel_han
 /**
  * Checks a plugin's activation: every capability its manifest provides must have been provided, and nothing else.
  * When it passes, each implementation the plugin provided joins the answers for its capability, after every one
- * verified before it, and each watch of that capability hears WEIVEL_CAPABILITY_PROVIDED. Verifying it again
- * admits nothing new, since anything it provided since is undeclared and so refused.
+ * verified before it, and each watch of that capability hears WEIVEL_CAPABILITY_PROVIDED. A capability provided
+ * after a passing verify is answered OK with a handle that never joins: it is undeclared, so the next verify refuses
+ * the plugin.
  *
  * When it does not pass, nothing joins, and the caller quarantines the plugin.
  *
@@ -1098,6 +1102,14 @@ typedef struct weivel_capability_list {
  * Reach is checked first: the plugin must list `id` among the capabilities it consumes or provides, else it is
  * answered an empty list and refused (WEIVEL_REFUSAL_UNDECLARED), reported as a WEIVEL_EVENT_REACH_REFUSED of kind
  * WEIVEL_REACH_CAPABILITY once per plugin and id. Then a plugin no longer running is let through.
+ *
+ * The holder rule is the services' rule (weivel_unregister): a plugin holds each implementation this call hands it,
+ * once however often it asks, until the implementation is withdrawn or the plugin is released or quarantined. A
+ * withdrawal, when its provider is quarantined, released or forgotten, revokes it to every holder by one
+ * WEIVEL_EVENT_REVOKED each, before any watch hears it withdrawn; a plugin that holds and watches gets both. A
+ * plugin released or quarantined has what it holds revoked to it in the same call, and a released plugin's late
+ * `all` holds again until the implementation goes or the plugin is forgotten. When a holding cannot be recorded,
+ * the call answers WEIVEL_STATUS_OUT_OF_MEMORY and hands nothing over.
  *
  * @param list the caller's struct with `size` set and nothing held; on WEIVEL_STATUS_OK it must be passed to
  * weivel_capability_list_release.
