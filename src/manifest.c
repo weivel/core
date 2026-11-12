@@ -27,8 +27,9 @@ static bool refuse_shape(shape_check *check, const char *detail, const char *fix
 static bool refuse_null_items(shape_check *check, const char *field, uint32_t count) {
     char detail[256];
     char fix[256];
-    snprintf(detail, sizeof detail, "counts %u entries in %s but points at none", (unsigned)count, field);
-    snprintf(fix, sizeof fix, "point %s's items at its entries, or set its count to 0", field);
+    snprintf(detail, sizeof detail, "declares %u %s in %s but gives none", (unsigned)count,
+             count == 1 ? "entry" : "entries", field);
+    snprintf(fix, sizeof fix, "list the entries of %s, or declare none", field);
     return refuse_shape(check, detail, fix);
 }
 
@@ -36,8 +37,8 @@ static bool refuse_missing(shape_check *check, const char *field, uint32_t index
                            const char *one) {
     char detail[256];
     char fix[256];
-    snprintf(detail, sizeof detail, "has no %s at %s[%u]", what, field, (unsigned)index);
-    snprintf(fix, sizeof fix, "give %s[%u] %s %s, or remove it", field, (unsigned)index, one, what);
+    snprintf(detail, sizeof detail, "has an entry with no %s in %s (entry %u)", what, field, (unsigned)index + 1);
+    snprintf(fix, sizeof fix, "give entry %u of %s %s %s, or remove it", (unsigned)index + 1, field, one, what);
     return refuse_shape(check, detail, fix);
 }
 
@@ -79,8 +80,8 @@ static bool check_strings(shape_check *check, const weivel_strings *strings, con
         return refuse_null_items(check, field, strings->count);
     }
     for (uint32_t index = 0; index < strings->count; index++) {
-        if (strings->items[index] == NULL) {
-            return refuse_missing(check, field, index, "string", "a");
+        if (is_empty(strings->items[index])) {
+            return refuse_missing(check, field, index, "value", "a");
         }
         if (appears_before(strings->items, index)) {
             return refuse_twice(check, field, strings->items[index]);
@@ -108,7 +109,7 @@ static bool check_elements(shape_check *check, const element_list *list, size_t 
     if (list->items == NULL) {
         return refuse_null_items(check, field, list->count);
     }
-    char detail[256];
+    char detail[384];
     if (list->stride < first_size) {
         snprintf(detail, sizeof detail, "gives %s elements of size %u, smaller than their first shape of %u", field,
                  (unsigned)list->stride, (unsigned)first_size);
@@ -117,8 +118,8 @@ static bool check_elements(shape_check *check, const element_list *list, size_t 
     for (uint32_t index = 1; index < list->count; index++) {
         uint32_t size = weivel_sized_size(element_at(list, index));
         if (size != list->stride) {
-            snprintf(detail, sizeof detail, "gives %s[%u] size %u where %s[0] gives %u", field, (unsigned)index,
-                     (unsigned)size, field, (unsigned)list->stride);
+            snprintf(detail, sizeof detail, "gives entry %u of %s size %u where its first entry gives %u",
+                     (unsigned)index + 1, field, (unsigned)size, (unsigned)list->stride);
             return refuse_shape(check, detail, "build each list as one array of one element type");
         }
     }
@@ -188,21 +189,21 @@ static bool want_named_before(const element_list *list, uint32_t index, const ch
 }
 
 static bool check_offers(shape_check *check, const weivel_service_offers *offers) {
-    const char *field = "services.provides";
+    const char *field = "the services it provides";
     element_list list = list_of(offers->items, offers->count);
     if (!check_elements(check, &list, WEIVEL_SERVICE_OFFER_FIRST_SIZE, field)) {
         return false;
     }
     for (uint32_t index = 0; index < list.count; index++) {
         weivel_service_offer offer = offer_at(&list, index);
-        char attributes[64];
-        snprintf(attributes, sizeof attributes, "%s[%u].attributes", field, (unsigned)index);
+        char attributes[192];
         if (is_empty(offer.id)) {
             return refuse_missing(check, field, index, "id", "an");
         }
         if (offer_named_before(&list, index, offer.id)) {
             return refuse_twice(check, field, offer.id);
         }
+        snprintf(attributes, sizeof attributes, "the attributes of the service \"%s\"", offer.id);
         if (!check_numbers(check, &offer.attributes, attributes)) {
             return false;
         }
@@ -210,34 +211,35 @@ static bool check_offers(shape_check *check, const weivel_service_offers *offers
     return true;
 }
 
-static bool check_choice(shape_check *check, uint32_t choice, const char *field, uint32_t index, const char *name) {
+static bool check_choice(shape_check *check, uint32_t choice, const char *service, const char *name) {
     if (choice <= WEIVEL_CHOICE_YES) {
         return true;
     }
     char detail[256];
-    snprintf(detail, sizeof detail, "sets %s[%u].%s to %u, which is no weivel_choice", field, (unsigned)index, name,
+    snprintf(detail, sizeof detail,
+             "says whether the service \"%s\" is %s with %u, which is neither yes, no nor absent", service, name,
              (unsigned)choice);
     return refuse_shape(check, detail, "set it to WEIVEL_CHOICE_DEFAULT, WEIVEL_CHOICE_NO or WEIVEL_CHOICE_YES");
 }
 
 static bool check_wants(shape_check *check, const weivel_service_wants *wants) {
-    const char *field = "services.consumes";
+    const char *field = "the services it consumes";
     element_list list = list_of(wants->items, wants->count);
     if (!check_elements(check, &list, WEIVEL_SERVICE_WANT_FIRST_SIZE, field)) {
         return false;
     }
     for (uint32_t index = 0; index < list.count; index++) {
         weivel_service_want want = want_at(&list, index);
-        char constraints[64];
-        snprintf(constraints, sizeof constraints, "%s[%u].constraints", field, (unsigned)index);
+        char constraints[192];
         if (is_empty(want.id)) {
             return refuse_missing(check, field, index, "id", "an");
         }
         if (want_named_before(&list, index, want.id)) {
             return refuse_twice(check, field, want.id);
         }
-        if (!check_choice(check, want.optional, field, index, "optional") ||
-            !check_choice(check, want.degradable, field, index, "degradable") ||
+        snprintf(constraints, sizeof constraints, "the constraints on the service \"%s\"", want.id);
+        if (!check_choice(check, want.optional, want.id, "optional") ||
+            !check_choice(check, want.degradable, want.id, "degradable") ||
             !check_numbers(check, &want.constraints, constraints)) {
             return false;
         }
@@ -248,13 +250,13 @@ static bool check_wants(shape_check *check, const weivel_service_wants *wants) {
 static bool check_shape(const weivel_manifest *manifest, weivel_manifest_problem *problem) {
     if (is_empty(manifest->import_name)) {
         snprintf(problem->detail, sizeof problem->detail, "the manifest has no import name");
-        snprintf(problem->fix, sizeof problem->fix, "set import_name to the plugin's id");
+        snprintf(problem->fix, sizeof problem->fix, "give the manifest an import name");
         return false;
     }
     shape_check check = {manifest->import_name, problem};
     return check_strings(&check, &manifest->targets, "targets") &&
-           check_strings(&check, &manifest->capabilities.provides, "capabilities.provides") &&
-           check_strings(&check, &manifest->capabilities.consumes, "capabilities.consumes") &&
+           check_strings(&check, &manifest->capabilities.provides, "the capabilities it provides") &&
+           check_strings(&check, &manifest->capabilities.consumes, "the capabilities it consumes") &&
            check_offers(&check, &manifest->services.provides) && check_wants(&check, &manifest->services.consumes) &&
            check_strings(&check, &manifest->permissions, "permissions");
 }

@@ -86,7 +86,9 @@ typedef enum weivel_refusal_code {
     /** A manifest's own shape is wrong (no import name, a NULL in a list, an id listed twice); detail says where. */
     WEIVEL_REFUSAL_MALFORMED_MANIFEST = 3,
     /** This host cannot load the manifest's plugin; the answer's axis says which check refused it. */
-    WEIVEL_REFUSAL_INCOMPATIBLE = 4
+    WEIVEL_REFUSAL_INCOMPATIBLE = 4,
+    /** A plugin with this import name is already registered on this core; detail names it. */
+    WEIVEL_REFUSAL_NAME_TAKEN = 5
 } weivel_refusal_code;
 
 /**
@@ -407,7 +409,8 @@ WEIVEL_API weivel_status weivel_support_release(weivel_support *answer);
  * @param plugin receives the plugin's handle. Required.
  * @param pending_events receives how many events wait; may be NULL.
  * @return WEIVEL_STATUS_OK with `*plugin` set; WEIVEL_STATUS_REFUSED for a malformed manifest, queuing a refusal
- * with code WEIVEL_REFUSAL_MALFORMED_MANIFEST; WEIVEL_STATUS_MALFORMED for a NULL core, manifest or plugin or a
+ * with code WEIVEL_REFUSAL_MALFORMED_MANIFEST, or for an import name a registered plugin already holds, since the
+ * import name namespaces a plugin's services, queuing one with code WEIVEL_REFUSAL_NAME_TAKEN; WEIVEL_STATUS_MALFORMED for a NULL core, manifest or plugin or a
  * manifest smaller than its first shape, queuing a refusal when the core is given; WEIVEL_STATUS_OUT_OF_MEMORY.
  * `*plugin` is 0 on every answer but OK.
  * Threading: any thread.

@@ -302,9 +302,9 @@ static weivel_manifest named(const char *import_name) {
 
 static void a_manifest_without_an_import_name_is_refused(void) {
     weivel_manifest manifest = named(NULL);
-    check_shape_refused(&manifest, "the manifest has no import name", "set import_name to the plugin's id");
+    check_shape_refused(&manifest, "the manifest has no import name", "give the manifest an import name");
     manifest = named("");
-    check_shape_refused(&manifest, "the manifest has no import name", "set import_name to the plugin's id");
+    check_shape_refused(&manifest, "the manifest has no import name", "give the manifest an import name");
 }
 
 static void a_null_in_a_list_is_refused(void) {
@@ -312,19 +312,51 @@ static void a_null_in_a_list_is_refused(void) {
     weivel_manifest manifest = named("holey");
     manifest.targets.items = holes;
     manifest.targets.count = 2;
-    check_shape_refused(&manifest, "the manifest of \"holey\" has no string at targets[1]",
-                        "give targets[1] a string, or remove it");
+    check_shape_refused(&manifest, "the manifest of \"holey\" has an entry with no value in targets (entry 2)",
+                        "give entry 2 of targets a value, or remove it");
 
     manifest = named("holey");
     manifest.permissions.count = 3;
-    check_shape_refused(&manifest, "the manifest of \"holey\" counts 3 entries in permissions but points at none",
-                        "point permissions's items at its entries, or set its count to 0");
+    check_shape_refused(&manifest, "the manifest of \"holey\" declares 3 entries in permissions but gives none",
+                        "list the entries of permissions, or declare none");
 
     manifest = named("holey");
     manifest.services.consumes.count = 1;
     check_shape_refused(&manifest,
-                        "the manifest of \"holey\" counts 1 entries in services.consumes but points at none",
-                        "point services.consumes's items at its entries, or set its count to 0");
+                        "the manifest of \"holey\" declares 1 entry in the services it consumes but gives none",
+                        "list the entries of the services it consumes, or declare none");
+}
+
+static void an_empty_entry_is_refused_in_every_list(void) {
+    const char *const empty_second[] = {"studio", ""};
+    weivel_manifest manifest = named("blank");
+    manifest.targets.items = empty_second;
+    manifest.targets.count = 2;
+    check_shape_refused(&manifest, "the manifest of \"blank\" has an entry with no value in targets (entry 2)",
+                        "give entry 2 of targets a value, or remove it");
+
+    const char *const empty_first[] = {""};
+    manifest = named("blank");
+    manifest.capabilities.provides.items = empty_first;
+    manifest.capabilities.provides.count = 1;
+    check_shape_refused(&manifest,
+                        "the manifest of \"blank\" has an entry with no value in the capabilities it provides "
+                        "(entry 1)",
+                        "give entry 1 of the capabilities it provides a value, or remove it");
+
+    manifest = named("blank");
+    manifest.capabilities.consumes.items = empty_first;
+    manifest.capabilities.consumes.count = 1;
+    check_shape_refused(&manifest,
+                        "the manifest of \"blank\" has an entry with no value in the capabilities it consumes "
+                        "(entry 1)",
+                        "give entry 1 of the capabilities it consumes a value, or remove it");
+
+    manifest = named("blank");
+    manifest.permissions.items = empty_first;
+    manifest.permissions.count = 1;
+    check_shape_refused(&manifest, "the manifest of \"blank\" has an entry with no value in permissions (entry 1)",
+                        "give entry 1 of permissions a value, or remove it");
 }
 
 static void an_id_listed_twice_is_refused(void) {
@@ -332,8 +364,9 @@ static void an_id_listed_twice_is_refused(void) {
     weivel_manifest manifest = named("doubled");
     manifest.capabilities.provides.items = twice;
     manifest.capabilities.provides.count = 3;
-    check_shape_refused(&manifest, "the manifest of \"doubled\" lists \"media.decode\" twice in capabilities.provides",
-                        "list \"media.decode\" once in capabilities.provides");
+    check_shape_refused(&manifest,
+                        "the manifest of \"doubled\" lists \"media.decode\" twice in the capabilities it provides",
+                        "list \"media.decode\" once in the capabilities it provides");
 
     weivel_service_want wants[2] = {WEIVEL_INIT(weivel_service_want), WEIVEL_INIT(weivel_service_want)};
     wants[0].id = "storage:object";
@@ -341,8 +374,9 @@ static void an_id_listed_twice_is_refused(void) {
     manifest = named("doubled");
     manifest.services.consumes.items = wants;
     manifest.services.consumes.count = 2;
-    check_shape_refused(&manifest, "the manifest of \"doubled\" lists \"storage:object\" twice in services.consumes",
-                        "list \"storage:object\" once in services.consumes");
+    check_shape_refused(&manifest,
+                        "the manifest of \"doubled\" lists \"storage:object\" twice in the services it consumes",
+                        "list \"storage:object\" once in the services it consumes");
 
     weivel_number numbers[2] = {number_of("minReplicas", 1), number_of("minReplicas", 2)};
     weivel_service_offer offers[1] = {WEIVEL_INIT(weivel_service_offer)};
@@ -353,8 +387,9 @@ static void an_id_listed_twice_is_refused(void) {
     manifest.services.provides.items = offers;
     manifest.services.provides.count = 1;
     check_shape_refused(&manifest,
-                        "the manifest of \"doubled\" lists \"minReplicas\" twice in services.provides[0].attributes",
-                        "list \"minReplicas\" once in services.provides[0].attributes");
+                        "the manifest of \"doubled\" lists \"minReplicas\" twice in the attributes of the service "
+                        "\"media:transcode\"",
+                        "list \"minReplicas\" once in the attributes of the service \"media:transcode\"");
 }
 
 static void a_service_without_an_id_is_refused(void) {
@@ -363,8 +398,9 @@ static void a_service_without_an_id_is_refused(void) {
     weivel_manifest manifest = named("nameless");
     manifest.services.provides.items = offers;
     manifest.services.provides.count = 2;
-    check_shape_refused(&manifest, "the manifest of \"nameless\" has no id at services.provides[1]",
-                        "give services.provides[1] an id, or remove it");
+    check_shape_refused(&manifest,
+                        "the manifest of \"nameless\" has an entry with no id in the services it provides (entry 2)",
+                        "give entry 2 of the services it provides an id, or remove it");
 }
 
 static void a_choice_out_of_range_is_refused(void) {
@@ -375,8 +411,8 @@ static void a_choice_out_of_range_is_refused(void) {
     manifest.services.consumes.items = wants;
     manifest.services.consumes.count = 1;
     check_shape_refused(&manifest,
-                        "the manifest of \"choosy\" sets services.consumes[0].degradable to 7, which is no "
-                        "weivel_choice",
+                        "the manifest of \"choosy\" says whether the service \"storage:object\" is degradable with 7, "
+                        "which is neither yes, no nor absent",
                         "set it to WEIVEL_CHOICE_DEFAULT, WEIVEL_CHOICE_NO or WEIVEL_CHOICE_YES");
 }
 
@@ -392,15 +428,16 @@ static void elements_of_a_wrong_size_are_refused(void) {
     wants[1].size = 8;
     char detail[256];
     snprintf(detail, sizeof detail,
-             "the manifest of \"sized\" gives services.consumes elements of size 8, smaller than their first shape "
-             "of %u",
+             "the manifest of \"sized\" gives the services it consumes elements of size 8, smaller than their "
+             "first shape of %u",
              (unsigned)WEIVEL_SERVICE_WANT_FIRST_SIZE);
     check_shape_refused(&manifest, detail, "initialise each element with WEIVEL_INIT");
 
     wants[0].size = (uint32_t)sizeof(weivel_service_want);
     wants[1].size = (uint32_t)WEIVEL_SERVICE_WANT_FIRST_SIZE;
     snprintf(detail, sizeof detail,
-             "the manifest of \"sized\" gives services.consumes[1] size %u where services.consumes[0] gives %u",
+             "the manifest of \"sized\" gives entry 2 of the services it consumes size %u where its first entry "
+             "gives %u",
              (unsigned)WEIVEL_SERVICE_WANT_FIRST_SIZE, (unsigned)sizeof(weivel_service_want));
     check_shape_refused(&manifest, detail, "build each list as one array of one element type");
 }
@@ -423,20 +460,37 @@ static void malformed_register_calls_are_answered_not_crashed(void) {
     weivel_core_destroy(core);
 }
 
-static void each_registration_answers_its_own_handle(void) {
+static void a_taken_import_name_is_refused_at_registration(void) {
     weivel_core *core = create_core();
     weivel_manifest first = named("first");
+    weivel_manifest again = named("first");
     weivel_manifest second = named("second");
     weivel_handle first_handle = 0;
+    weivel_handle again_handle = 77;
     weivel_handle second_handle = 0;
-    for (uint32_t round = 0; round < 40; round++) {
-        CHECK(weivel_register_manifest(core, &first, &first_handle, NULL) == WEIVEL_STATUS_OK);
-    }
+    uint32_t pending = 0;
+    CHECK(weivel_register_manifest(core, &first, &first_handle, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_register_manifest(core, &again, &again_handle, &pending) == WEIVEL_STATUS_REFUSED);
+    CHECK(again_handle == 0);
+    CHECK(pending == 1);
+    weivel_event event = WEIVEL_INIT(weivel_event);
+    CHECK(weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_OK);
+    CHECK(event.kind == WEIVEL_EVENT_REFUSAL);
+    CHECK(event.data.refusal.code == WEIVEL_REFUSAL_NAME_TAKEN);
+    check_text(event.data.refusal.detail, "a plugin named \"first\" is already registered", "taken detail");
+    check_text(event.data.refusal.fix,
+               "give this plugin its own import name, or release the plugin registered under it", "taken fix");
+    weivel_event_release(&event);
+
     CHECK(weivel_register_manifest(core, &second, &second_handle, NULL) == WEIVEL_STATUS_OK);
-    CHECK(first_handle != second_handle);
+    CHECK(second_handle != 0 && second_handle != first_handle);
     const weivel_manifest *kept = registered(core, second_handle);
     if (kept != NULL) {
         check_text(kept->import_name, "second", "second import name");
+    }
+    kept = registered(core, first_handle);
+    if (kept != NULL) {
+        check_text(kept->import_name, "first", "first import name");
     }
     weivel_core_destroy(core);
 }
@@ -453,6 +507,7 @@ int main(void) {
     a_choice_out_of_range_is_refused();
     elements_of_a_wrong_size_are_refused();
     malformed_register_calls_are_answered_not_crashed();
-    each_registration_answers_its_own_handle();
+    a_taken_import_name_is_refused_at_registration();
+    an_empty_entry_is_refused_in_every_list();
     return check_summary("manifest_test");
 }

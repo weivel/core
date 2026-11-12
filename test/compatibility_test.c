@@ -182,7 +182,7 @@ static void a_malformed_manifest_is_answered_as_data(void) {
     CHECK(answer.axis == WEIVEL_AXIS_NONE);
     CHECK(answer.refusal.code == WEIVEL_REFUSAL_MALFORMED_MANIFEST);
     check_text(answer.refusal.detail, "the manifest has no import name", "detail");
-    check_text(answer.refusal.fix, "set import_name to the plugin's id", "fix");
+    check_text(answer.refusal.fix, "give the manifest an import name", "fix");
     weivel_support_release(&answer);
     weivel_core_destroy(core);
 }
