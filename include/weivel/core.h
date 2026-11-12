@@ -261,6 +261,9 @@ typedef struct weivel_manifest {
     weivel_strings permissions;
 } weivel_manifest;
 
+/** The api level this core implements, which a host implements unless it says otherwise. */
+#define WEIVEL_API_VERSION 2u
+
 /** The largest `initial_event_capacity` weivel_core_create accepts. */
 #define WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY 65536u
 
@@ -272,7 +275,7 @@ typedef struct weivel_core_options {
     uint32_t initial_event_capacity;
     /** The least level of log event the core queues, a weivel_log_level. Default WEIVEL_LOG_WARNING. */
     uint32_t minimum_log_level;
-    /** The highest api level this host implements. Default 0, so a plugin declaring any api above 0 is refused. */
+    /** The highest api level this host implements. Default WEIVEL_API_VERSION. */
     uint32_t api;
     /** The applications this host hosts, opaque, copied by weivel_core_create; empty means every application. */
     weivel_strings applications;
