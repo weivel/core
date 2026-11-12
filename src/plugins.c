@@ -1,6 +1,8 @@
 #include "plugins.h"
 
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "core_internal.h"
 #include "sized.h"
@@ -53,6 +55,23 @@ weivel_status weivel_plugins_add(weivel_plugins *plugins, weivel_plugin *plugin)
     return WEIVEL_STATUS_OK;
 }
 
+bool weivel_plugins_named(const weivel_plugins *plugins, const char *import_name) {
+    for (uint32_t index = 0; index < plugins->count; index++) {
+        if (strcmp(plugins->items[index]->manifest.value.import_name, import_name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static weivel_status refuse_taken_name(weivel_core *core, const char *import_name) {
+    char detail[384];
+    snprintf(detail, sizeof detail, "a plugin named \"%s\" is already registered", import_name);
+    weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_NAME_TAKEN, detail,
+                               "give this plugin its own import name, or release the plugin registered under it");
+    return WEIVEL_STATUS_REFUSED;
+}
+
 static weivel_status refuse_manifest(weivel_core *core, const weivel_manifest_problem *problem) {
     weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_MALFORMED_MANIFEST, problem->detail, problem->fix);
     return WEIVEL_STATUS_REFUSED;
@@ -77,7 +96,9 @@ static weivel_status register_manifest(weivel_core *core, const weivel_manifest 
     }
     weivel_manifest_problem problem;
     weivel_status status = weivel_manifest_copy(manifest, &plugin->manifest, &problem);
-    if (status == WEIVEL_STATUS_OK) {
+    if (status == WEIVEL_STATUS_OK && weivel_plugins_named(core->plugins, plugin->manifest.value.import_name)) {
+        status = refuse_taken_name(core, plugin->manifest.value.import_name);
+    } else if (status == WEIVEL_STATUS_OK) {
         status = keep_plugin(core, plugin);
     } else if (status == WEIVEL_STATUS_REFUSED) {
         refuse_manifest(core, &problem);

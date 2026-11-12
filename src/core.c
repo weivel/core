@@ -35,6 +35,9 @@ static weivel_core_options resolve_options(const weivel_core_options *options) {
     if (resolved.minimum_log_level == WEIVEL_LOG_DEFAULT) {
         resolved.minimum_log_level = WEIVEL_LOG_WARNING;
     }
+    if (resolved.api == 0) {
+        resolved.api = WEIVEL_API_VERSION;
+    }
     return resolved;
 }
 

@@ -139,7 +139,7 @@ static void the_hosts_applications_are_copied_at_create(void) {
     weivel_core_destroy(core);
 }
 
-static void options_of_the_previous_size_describe_a_host_of_everything_at_api_0(void) {
+static void options_of_the_previous_size_describe_a_host_of_everything_at_the_engines_api(void) {
     weivel_core_options options = WEIVEL_INIT(weivel_core_options);
     options.applications = strings_of(notes, 1);
     options.api = 9;
@@ -147,11 +147,18 @@ static void options_of_the_previous_size_describe_a_host_of_everything_at_api_0(
     weivel_core *core = NULL;
     CHECK(weivel_core_create(&options, &core, NULL) == WEIVEL_STATUS_OK);
 
-    weivel_manifest manifest = manifest_of("studio-thing", 0, studio, 1);
+    weivel_manifest manifest = manifest_of("studio-thing", WEIVEL_API_VERSION, studio, 1);
     check_supported(core, &manifest);
-    manifest.api = 1;
-    check_refused(core, &manifest, WEIVEL_AXIS_API, "needs api 1, this host has api 0",
-                  "update the app to a version that implements api 1 or later");
+    manifest.api = 3;
+    check_refused(core, &manifest, WEIVEL_AXIS_API, "needs api 3, this host has api 2",
+                  "update the app to a version that implements api 3 or later");
+    weivel_core_destroy(core);
+}
+
+static void a_host_that_names_no_api_implements_the_engines(void) {
+    weivel_core *core = host_of(NULL, 0, 0);
+    weivel_manifest manifest = manifest_of("current-thing", 2, NULL, 0);
+    check_supported(core, &manifest);
     weivel_core_destroy(core);
 }
 
@@ -175,7 +182,7 @@ static void a_malformed_manifest_is_answered_as_data(void) {
     CHECK(answer.axis == WEIVEL_AXIS_NONE);
     CHECK(answer.refusal.code == WEIVEL_REFUSAL_MALFORMED_MANIFEST);
     check_text(answer.refusal.detail, "the manifest has no import name", "detail");
-    check_text(answer.refusal.fix, "set import_name to the plugin's id", "fix");
+    check_text(answer.refusal.fix, "give the manifest an import name", "fix");
     weivel_support_release(&answer);
     weivel_core_destroy(core);
 }
@@ -221,7 +228,8 @@ int main(void) {
     overlapping_application_sets_are_supported();
     every_target_and_application_is_named();
     the_hosts_applications_are_copied_at_create();
-    options_of_the_previous_size_describe_a_host_of_everything_at_api_0();
+    options_of_the_previous_size_describe_a_host_of_everything_at_the_engines_api();
+    a_host_that_names_no_api_implements_the_engines();
     a_host_with_a_null_application_is_malformed();
     a_malformed_manifest_is_answered_as_data();
     malformed_supports_calls_are_answered_not_crashed();

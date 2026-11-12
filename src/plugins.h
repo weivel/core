@@ -1,6 +1,7 @@
 #ifndef WEIVEL_PLUGINS_H
 #define WEIVEL_PLUGINS_H
 
+#include <stdbool.h>
 #include <weivel/core.h>
 
 #include "manifest.h"
@@ -21,5 +22,8 @@ void weivel_plugins_destroy(weivel_plugins *plugins);
 
 /** Takes ownership of `plugin` on WEIVEL_STATUS_OK; on WEIVEL_STATUS_OUT_OF_MEMORY the caller still owns it. */
 weivel_status weivel_plugins_add(weivel_plugins *plugins, weivel_plugin *plugin);
+
+/** Whether a plugin registered under `import_name` is in the collection. */
+bool weivel_plugins_named(const weivel_plugins *plugins, const char *import_name);
 
 #endif

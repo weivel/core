@@ -86,7 +86,9 @@ typedef enum weivel_refusal_code {
     /** A manifest's own shape is wrong (no import name, a NULL in a list, an id listed twice); detail says where. */
     WEIVEL_REFUSAL_MALFORMED_MANIFEST = 3,
     /** This host cannot load the manifest's plugin; the answer's axis says which check refused it. */
-    WEIVEL_REFUSAL_INCOMPATIBLE = 4
+    WEIVEL_REFUSAL_INCOMPATIBLE = 4,
+    /** A plugin with this import name is already registered on this core; detail names it. */
+    WEIVEL_REFUSAL_NAME_TAKEN = 5
 } weivel_refusal_code;
 
 /**
@@ -261,6 +263,9 @@ typedef struct weivel_manifest {
     weivel_strings permissions;
 } weivel_manifest;
 
+/** The api level this core implements, which a host implements unless it says otherwise. */
+#define WEIVEL_API_VERSION 2u
+
 /** The largest `initial_event_capacity` weivel_core_create accepts. */
 #define WEIVEL_CORE_MAXIMUM_INITIAL_EVENT_CAPACITY 65536u
 
@@ -272,7 +277,7 @@ typedef struct weivel_core_options {
     uint32_t initial_event_capacity;
     /** The least level of log event the core queues, a weivel_log_level. Default WEIVEL_LOG_WARNING. */
     uint32_t minimum_log_level;
-    /** The highest api level this host implements. Default 0, so a plugin declaring any api above 0 is refused. */
+    /** The highest api level this host implements. Default WEIVEL_API_VERSION. */
     uint32_t api;
     /** The applications this host hosts, opaque, copied by weivel_core_create; empty means every application. */
     weivel_strings applications;
@@ -404,7 +409,8 @@ WEIVEL_API weivel_status weivel_support_release(weivel_support *answer);
  * @param plugin receives the plugin's handle. Required.
  * @param pending_events receives how many events wait; may be NULL.
  * @return WEIVEL_STATUS_OK with `*plugin` set; WEIVEL_STATUS_REFUSED for a malformed manifest, queuing a refusal
- * with code WEIVEL_REFUSAL_MALFORMED_MANIFEST; WEIVEL_STATUS_MALFORMED for a NULL core, manifest or plugin or a
+ * with code WEIVEL_REFUSAL_MALFORMED_MANIFEST, or for an import name a registered plugin already holds, since the
+ * import name namespaces a plugin's services, queuing one with code WEIVEL_REFUSAL_NAME_TAKEN; WEIVEL_STATUS_MALFORMED for a NULL core, manifest or plugin or a
  * manifest smaller than its first shape, queuing a refusal when the core is given; WEIVEL_STATUS_OUT_OF_MEMORY.
  * `*plugin` is 0 on every answer but OK.
  * Threading: any thread.
