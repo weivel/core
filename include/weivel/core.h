@@ -25,9 +25,10 @@
  *   holding is recorded, and a watch's notification before the change that causes it. A call that cannot reserve
  *   everything it will owe answers WEIVEL_STATUS_OUT_OF_MEMORY and changes nothing, and a reserved event is always
  *   delivered, so no want settles unheard and no holder misses a revocation. The core always owes its caller its
- *   current deadline, so that announcement's room is reserved when the core is created and is never given back. A
- *   log is the one event the core may drop when memory runs out; a rejected want whose refusal texts cannot be
- *   copied carries a fixed sentence in their place, its code always exact.
+ *   current deadline, so that announcement's room is reserved when the core is created and is never given back;
+ *   the one announcement never delivered is one a newer announcement supersedes before it is drained. A log is the
+ *   one event the core may drop when memory runs out; a rejected want whose refusal texts cannot be copied carries
+ *   a fixed sentence in their place, its code always exact.
  * - Answers. An answer the core fills into a caller's struct is size-prefixed and freed by its own release call.
  *   Its arrays are of one of two kinds, and every answer says which. An element that may grow begins with its own
  *   `uint32_t size`, the core's, and the caller steps through the array by the first element's `size`, never by
@@ -42,7 +43,8 @@
  *   WEIVEL_EVENT_DEADLINE, and acts on time only in weivel_advance.
  * - Threads. Every call taking a core may be made from any thread; one lock inside the core serialises them and
  *   is never held while anything outside the core runs. One thread drains the queue: events come out in the order
- *   they happened, and two threads draining at once would split that order between them.
+ *   they happened, but for a deadline announcement, which a newer one takes out and follows every other event its
+ *   call queued, and two threads draining at once would split that order between them.
  * - Enums. Enumerations travel in struct fields as uint32_t, so their width never depends on the compiler.
  */
 

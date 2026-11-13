@@ -116,14 +116,21 @@ static void deliver(weivel_events *events, const weivel_event *event) {
     place(events, event);
 }
 
+static weivel_event *at_position(weivel_events *events, uint32_t position) {
+    return &events->ring[(events->first + position) % events->capacity];
+}
+
 void weivel_events_drop_newest(weivel_events *events) {
-    events->count--;
-    weivel_event *newest = &events->ring[(events->first + events->count) % events->capacity];
-    if (newest->kind == WEIVEL_EVENT_DEADLINE) {
-        events->deadline_waiting = false;
+    uint32_t position = events->count - 1;
+    if (at_position(events, position)->kind == WEIVEL_EVENT_DEADLINE) {
+        position--;
     }
-    free(newest->storage);
-    memset(newest, 0, sizeof *newest);
+    free(at_position(events, position)->storage);
+    for (; position + 1 < events->count; position++) {
+        *at_position(events, position) = *at_position(events, position + 1);
+    }
+    events->count--;
+    memset(at_position(events, events->count), 0, sizeof(weivel_event));
 }
 
 bool weivel_events_pop(weivel_events *events, weivel_event *event) {
@@ -137,10 +144,6 @@ bool weivel_events_pop(weivel_events *events, weivel_event *event) {
         events->deadline_waiting = false;
     }
     return true;
-}
-
-static weivel_event *at_position(weivel_events *events, uint32_t position) {
-    return &events->ring[(events->first + position) % events->capacity];
 }
 
 /** Takes the waiting deadline announcement out of the ring, closing the gap, so its room is free again. */

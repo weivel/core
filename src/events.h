@@ -31,7 +31,10 @@ uint32_t weivel_events_reserved(const weivel_events *events);
 /** Moves the oldest event, storage and all, into `event`; false when the queue is empty. */
 bool weivel_events_pop(weivel_events *events, weivel_event *event);
 
-/** Frees the newest event, taking back an event queued by a change that is being undone. */
+/**
+ * Frees the newest event other than the deadline announcement, taking back an event queued by a change that is being
+ * undone; an announcement waiting after it stays, so an undo can never lose the deadline the caller arms from.
+ */
 void weivel_events_drop_newest(weivel_events *events);
 
 /**
