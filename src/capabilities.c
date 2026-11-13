@@ -669,7 +669,8 @@ static void stop_watch(weivel_core *core, weivel_capability_watch *watch) {
     weivel_capability *capability = watch->capability;
     weivel_list_remove(&watch->by_capability);
     weivel_list_remove(&watch->by_consumer);
-    weivel_handles_release(core->handles, watch->handle, WEIVEL_RECORD_CAPABILITY_WATCH);
+    weivel_handles_release_ending(core->handles, watch->handle, WEIVEL_RECORD_CAPABILITY_WATCH,
+                                  WEIVEL_HANDLE_STOPPED);
     core->capabilities->watch_count--;
     free(watch);
     release_capability(core->capabilities, capability);

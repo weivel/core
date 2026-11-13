@@ -30,10 +30,10 @@ static void unlink_want(weivel_core *core, weivel_want *want) {
     }
 }
 
-/** Ends a want whose handle was answered; settling, rejecting and withdrawing all start here. */
-static void retire(weivel_core *core, weivel_want *want) {
+/** Ends a want whose handle was answered, `ending` the weivel_handle_condition weivel_handle_state answers after. */
+static void retire(weivel_core *core, weivel_want *want, uint32_t ending) {
     unlink_want(core, want);
-    weivel_handles_release(core->handles, want->handle, WEIVEL_RECORD_WANT);
+    weivel_handles_release_ending(core->handles, want->handle, WEIVEL_RECORD_WANT, ending);
 }
 
 /** Takes back a want the call now running made and never answered, its handle and reservation included. */
@@ -68,7 +68,7 @@ weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel
     }
     weivel_want_event settled = settlement(want, registration->handle, WEIVEL_REFUSAL_NONE, degraded_on != NULL);
     weivel_events_deliver_want(core->events, &settled, degraded_on, NULL, NULL);
-    retire(core, want);
+    retire(core, want, WEIVEL_HANDLE_SETTLED);
     free(want);
     return WEIVEL_STATUS_OK;
 }
@@ -77,12 +77,12 @@ void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, 
                            const char *detail, const char *fix) {
     weivel_want_event rejected = settlement(want, 0, code, false);
     weivel_events_deliver_want(core->events, &rejected, subject, detail, fix);
-    retire(core, want);
+    retire(core, want, WEIVEL_HANDLE_SETTLED);
     free(want);
 }
 
 void weivel_waiting_withdraw(weivel_core *core, weivel_want *want) {
-    retire(core, want);
+    retire(core, want, WEIVEL_HANDLE_WITHDRAWN);
     weivel_events_unreserve(core->events, 1);
     free(want);
 }

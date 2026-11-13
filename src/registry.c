@@ -262,7 +262,7 @@ void weivel_registry_unregister(weivel_core *core, weivel_registration *registra
 static void stop_watch(weivel_core *core, weivel_watch *watch) {
     weivel_list_remove(&watch->by_slot);
     weivel_list_remove(&watch->by_consumer);
-    weivel_handles_release(core->handles, watch->handle, WEIVEL_RECORD_WATCH);
+    weivel_handles_release_ending(core->handles, watch->handle, WEIVEL_RECORD_WATCH, WEIVEL_HANDLE_STOPPED);
     weivel_slot *slot = watch->slot;
     free(watch);
     core->registry->watch_count--;

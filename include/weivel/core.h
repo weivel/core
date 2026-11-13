@@ -969,6 +969,37 @@ WEIVEL_API weivel_status weivel_register_service(weivel_core *core, weivel_handl
  */
 WEIVEL_API weivel_status weivel_unregister(weivel_core *core, weivel_handle handle, uint32_t *pending_events);
 
+/** Where a want or a watch stands, as weivel_handle_state answers it. */
+typedef enum weivel_handle_condition {
+    /** A want that has not settled and was not withdrawn. */
+    WEIVEL_HANDLE_WAITING = 1,
+    /** A want that settled, with a service or with a refusal: its WEIVEL_EVENT_WANT_SETTLED is queued or drained. */
+    WEIVEL_HANDLE_SETTLED = 2,
+    /** A want weivel_unregister withdrew before it settled. */
+    WEIVEL_HANDLE_WITHDRAWN = 3,
+    /** A watch of a service or of a capability that still hears changes. */
+    WEIVEL_HANDLE_WATCHING = 4,
+    /** A watch that ended: by weivel_unregister, or because its plugin was released or quarantined. */
+    WEIVEL_HANDLE_STOPPED = 5
+} weivel_handle_condition;
+
+/**
+ * Answers where a want or a watch stands, for any asker: it queues nothing and changes nothing, so reading it never
+ * disturbs what it reads. A want or watch that has ended is answered how it ended until the next want, watch or
+ * other record that takes its place in the core's handle table has ended in turn; after that its handle is refused
+ * as a stale one is.
+ *
+ * @param handle a want handle weivel_want_service answered, or a watch handle weivel_watch_service or
+ * weivel_watch_capability answered.
+ * @param condition receives a weivel_handle_condition. Required; 0 on every answer but OK.
+ * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED, queuing nothing, for a handle that names no want or watch the
+ * core remembers, a plugin or registration handle included, since a query is not an attempt; WEIVEL_STATUS_MALFORMED
+ * for a NULL core or condition, queuing a refusal when the core is given.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_handle_state(weivel_core *core, weivel_handle handle, uint32_t *condition,
+                                             uint32_t *pending_events);
+
 /**
  * Answers the service registered under `id` now, as its registration handle, for a plugin that may reach it, or
  * for the host (WEIVEL_HOST), which reaches every id.

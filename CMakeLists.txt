@@ -29,6 +29,7 @@ set(WEIVEL_CORE_SOURCES
     src/core.c
     src/deadlines.c
     src/events.c
+    src/handle_state.c
     src/handles.c
     src/ledger.c
     src/manifest.c
