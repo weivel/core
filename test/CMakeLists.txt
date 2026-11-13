@@ -26,6 +26,7 @@ weivel_test(capabilities_test weivel_core_testing)
 weivel_test(ledger_test weivel_core_testing)
 weivel_test(threads_test weivel_core_testing)
 weivel_test(oom_test weivel_core_testing)
+weivel_test(events_test weivel_core_testing)
 
 add_library(echo SHARED echo/echo.c)
 target_compile_definitions(echo PRIVATE ECHO_BUILDING)

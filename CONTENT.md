@@ -26,8 +26,8 @@ no pointer into anything it handed out, and the caller keeps no pointer into the
 Every call that takes a core may be made from any thread. One lock inside each core serialises the calls, and it is
 never held while anything outside the core runs, which is why it cannot deadlock: the core never calls out. Two cores
 share nothing. Creating and destroying a core are the only calls that must not overlap another call on the same core.
-One thread drains the queue, since the events come out in the order they happened and two threads draining at once
-would split that order between them.
+One thread drains the queue, since the events come out in the order they happened, the deadline announcement aside,
+and two threads draining at once would split that order between them.
 
 ## Events and time
 
@@ -41,8 +41,10 @@ and a holder never misses a revocation. A log is the one event the core may drop
 
 Time is the caller's. Every timestamp is a count of milliseconds on a monotonic scale the caller chooses. The core
 announces every change to its next deadline as an event, at most one waiting at a time, in room kept for it from the
-core's creation; the caller arms its own timer from that event alone and tells the core the time when the timer
-fires. With no deadline there is no timer, so a wait without a deadline waits for as long as it takes.
+core's creation. A newer announcement takes out one not yet drained and is queued after everything else its call
+queued, so it is the one event that is not always delivered and does not keep its place in the order; what is
+drained is always the current deadline. The caller arms its own timer from that event alone and tells the core the
+time when the timer fires. With no deadline there is no timer, so a wait without a deadline waits for as long as it takes.
 
 ## Sizes
 
