@@ -49,6 +49,11 @@ one reader that acts at drain time rather than at dispatch (see `timer`).
 
 Loads the core's binary and owns the one wrapper every call goes through.
 
+- Before the call, the wrapper hands the core a deadline that has fallen due: it reads its clock, and when the clock
+  has reached the deadline it armed from the latest `WEIVEL_EVENT_DEADLINE` (see `timer`), it calls
+  `weivel_advance(now)` through itself first, drains and dispatches that as any call, and only then makes the call it
+  was asked for. The advance it makes for this is not checked again, so the check never recurses. It costs one clock
+  read per call; a layer running no timer has armed nothing and makes no check.
 - The wrapper makes the call, then drains: it calls `weivel_next_event` while the core reports events waiting, taking
   the count first from the call's own `pending_events` and then from each `weivel_next_event`, and stops when the
   count is 0 or the core answers `WEIVEL_STATUS_NONE`. A call that reports none waiting costs no further crossing.
@@ -67,6 +72,12 @@ Loads the core's binary and owns the one wrapper every call goes through.
   no other thread's call may land between them. A language with several threads either holds one layer lock across
   the call and its drain, or makes every call on one owning thread that others hand their calls to. No two threads
   drain at once; under the lock each caller drains its own call.
+- Dispatch never runs under the layer lock: the lock covers a call and its drain and is let go before any event is
+  dispatched, so a listener may call in. Exactly one thread dispatches the shared queue at a time. A call from another
+  thread while a dispatch runs is outside that dispatch: it takes the lock, makes its call and drains, and its events
+  join the end of the queue the active dispatcher delivers, in the order they were drained, rather than being
+  dispatched by the calling thread. So a release or a destroy made then defers its later steps exactly as one made
+  inside a dispatch does (see `host`).
 - It may not keep a list of which calls move a deadline, interpret a handle, or call any core function outside the
   wrapper.
 
@@ -99,14 +110,17 @@ Arms the core's next deadline on the language's own timer.
   call queues re-arm or disarm it as any others do.
 - A language whose timer cannot wait as long as a deadline lies away waits as long as it can and arms again when that
   wait ends, never calling `weivel_advance` before the deadline it armed.
-- When the deadline and other work fall due at the same moment, the timer fires first: the layer hands the core that
-  time before it makes the other call, so a registration at a want's deadline settles nothing.
+- The core learns a deadline has passed before any other call is made, never after it. The timer firing is one way it
+  learns; the wrapper's check before each call (see `core`) is the other, and it does not wait for the language's
+  scheduler: when the clock has reached the armed deadline but the timer has not run yet, because the scheduler has
+  not taken its turn, the process was suspended or the deadline and other work fall due at the same moment, the
+  wrapper advances the core first. So a registration at or after a want's deadline settles nothing.
 - With no deadline there is no timer, so a want that asked for no timeout waits for as long as it takes.
 - It may not keep a list of the calls that move a deadline, poll the core for its deadline, or advance the core on a
   time of its own reckoning.
 
-Witnessed by `want/a-timed-want-arms-the-timer-at-its-deadline`, `want/a-settled-want-disarms-the-timer` and
-`want/a-registration-at-the-deadline-loses`.
+Witnessed by `want/a-timed-want-arms-the-timer-at-its-deadline`, `want/a-settled-want-disarms-the-timer`,
+`want/a-registration-at-the-deadline-loses` and `want/a-registration-past-an-unfired-deadline-loses`.
 
 ## `context`
 
@@ -165,18 +179,26 @@ provided by the host, and its object is answered as any provider's is.
 
 **Activation.** Given plugins and the edge source its caller chooses, the host asks the core for the plan, then:
 
-1. starts each plugin of the plan's order in that order: opens it, builds its context and calls its activate;
+1. starts each plugin of the plan's order in that order: opens it, builds its context and calls its activate. Plan
+   order binds the call to each entry's activate and nothing the entry does after that call returns: an entry that
+   loads its plugin's code later may run that code in whatever order the loads finish;
 2. never waits for one plugin's activate to finish before starting the next, because a plugin whose activate waits on
    a service a later plugin registers would otherwise hold back every plugin behind it for good;
 3. as each activate settles, quarantines the plugin when it failed, with a reason saying so and a fix, and otherwise
    verifies it with `weivel_verify_activation`; a verification the core refuses quarantines the plugin in the same
    step, before anything else runs, with no reason of the host's, so its ledger row shows the core's refusal;
 4. returns once every activate has been started, without blocking on any of them settling, and returns the plan, its
-   order the order the activates were started in, so the caller can read it at once; each plugin's outcome,
-   active, quarantined or refused, arrives later, in whatever form the language uses for a result that comes later
-   (a promise, a future, a callback the caller registers, or an outcome the caller reads back). A host whose
-   activation blocked until every activate settled would never return while an activate waits on a want nothing
-   provides, and so could never be destroyed.
+   order the order the activates were started in, so the caller can read it at once; each plugin's outcome arrives
+   later, in whatever form the language uses for a result that comes later (a promise, a future, a callback the
+   caller registers, or an outcome the caller reads back). A host whose activation blocked until every activate
+   settled would never return while an activate waits on a want nothing provides, and so could never be destroyed.
+
+An outcome is one of four: `active`, `quarantined`, `refused` when the core refused to open the plugin, and `released`
+for a plugin released while its activate was in flight, answered when that release begins, so every outcome arrives
+even for an activate that never settles. An open that fails for a reason other than the core's refusal is a defect of
+the layer: it is reported to the error sink, answered as that plugin's `refused` outcome with no refusal, and the
+activation goes on to the next plugin, so the caller still receives the plan and every other outcome and no started
+plugin is left running without one.
 
 Witnessed by `lifecycle/an-awaited-want-does-not-hold-back-a-later-plugin` and
 `consume/a-refused-verify-quarantines-the-plugin`.
@@ -201,16 +223,23 @@ dispatched. The same holds for a quarantine (its entries end after the events it
 release a destroy makes. `lifecycle/a-release-deactivates-then-releases-then-forgets` exercises only a release made
 at the top level, outside any dispatch; the deferred case is held by review and the language's own tests.
 
-A plugin whose activate is still running when it is released is released the same way, and its activate settling
-later verifies nothing, quarantines nothing and reports nothing: no activation is left settling for a plugin the host
-no longer holds.
+A release counts as made inside a dispatch when its core release, step 2, runs inside one. A deactivate that finishes
+later moves step 2 and everything after it to when it finishes, so whether they are deferred is decided then, not when
+the release was asked for. A release waits for the deactivate however long it takes, and so does a destroy: the layer
+sets no timeout of its own, and a caller that wants a bound sets its own around the release or destroy it asks for.
+
+A plugin whose activate is still running when it is released is released the same way, its outcome is `released`, and
+its activate settling later verifies nothing, quarantines nothing and reports nothing further: no activation is left
+settling for a plugin the host no longer holds.
 
 Witnessed by `lifecycle/a-release-deactivates-then-releases-then-forgets`.
 
 **Destroy.** Destroying the host:
 
-1. releases every plugin the host opened and has not released, one whose activate is in flight included, in the
-   reverse of the order it opened them, so a consumer is released while what it consumes is still there;
+1. releases every plugin the host opened and has not released, one whose activate is in flight and one quarantined
+   included, in the reverse of the order it opened them, so a consumer is released while what it consumes is still
+   there. Each release calls the plugin's deactivate when its activate was called, a quarantined plugin's among them.
+   A plugin whose open the core refused was never opened and is never released;
 2. dispatches every event those releases queued and runs every deferred step they left to completion, each release's
    forget included, so no listener, deferred step or core call is left to run once the core is gone;
 3. unloads every C library it loaded; an unload that fails is reported to the error sink and the rest still unload;
@@ -246,7 +275,10 @@ declared function.
 - A status other than 0 answers a failure carrying the status and the body, read as UTF-8 where it is one.
 - Unloading unregisters every service of the library and refuses any call made after it.
 - There is no other function kind: the value 1 is retired, and a declaration naming any other kind is refused by the
-  standard's reader before the layer sees it.
+  standard's reader before the layer sees it. A declaration the caller builds itself with a kind other than bytes is
+  refused by the host as the caller's mistake, answered to the caller and not reported as a defect of the layer.
+- The host may use the standard's published declaration types, the layout of a declaration and its kind constants,
+  but it never loads or calls the standard's binary.
 
 **It may not** read a file, a manifest format or the environment on its own account; those are the standard's
 defaults, or the caller's.
