@@ -44,7 +44,8 @@ announces every change to its next deadline as an event, at most one waiting at 
 core's creation. A newer announcement takes out one not yet drained and is queued after everything else its call
 queued, so it is the one event that is not always delivered and does not keep its place in the order; what is
 drained is always the current deadline. The caller arms its own timer from that event alone and tells the core the
-time when the timer fires. With no deadline there is no timer, so a wait without a deadline waits for as long as it takes.
+time when the timer fires. With no deadline there is no timer, so a wait without a deadline waits for as long as it
+takes.
 
 ## Sizes
 
@@ -63,7 +64,8 @@ quarantined it, or else the refusal verification answered its activation. It als
 reported for those plugins, each with its code, in the order they were reported. A forgotten plugin leaves no trace
 in it.
 
-## Still to come
+## The contract a language implementation follows
 
-The contract a language implementation follows, its modules, how it drains the queue, maps handles to objects and
-arms the timer, will be written beside this description in the steps that build the first implementations.
+`CONTRACT.md` beside this description: the modules `MODULES` lists and what each may and may not do, how a layer
+drains the queue, maps handles to objects and arms its timer, how a host activates, releases and destroys, and which
+of the kit's layer vectors witnesses each rule.
