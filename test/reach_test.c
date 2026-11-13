@@ -806,6 +806,32 @@ static void a_long_id_is_never_cut_from_an_unpolled_want(void) {
     weivel_core_destroy(core);
 }
 
+static uint32_t ledger_has_fix(weivel_core *core) {
+    weivel_ledger_snapshot snapshot = WEIVEL_INIT(weivel_ledger_snapshot);
+    CHECK(weivel_ledger(core, &snapshot, NULL) == WEIVEL_STATUS_OK);
+    CHECK(snapshot.refusal_count == 1);
+    uint32_t has_fix = snapshot.refusal_count == 1 ? snapshot.refusals[0].has_fix : 2;
+    CHECK(weivel_ledger_snapshot_release(&snapshot) == WEIVEL_STATUS_OK);
+    return has_fix;
+}
+
+static void a_ledger_refusal_answers_has_fix_from_the_fix_its_record_keeps(void) {
+    weivel_core *core = core_knowing(NULL, 0);
+    plugin_spec spec = {.identity = "asker"};
+    weivel_handle plugin = open_spec(core, &spec);
+    weivel_handle implementation = 0;
+    CHECK(weivel_get_service(core, plugin, "elsewhere:thing", &implementation, NULL) == WEIVEL_STATUS_REFUSED);
+    weivel_reach_record *record = (weivel_reach_record *)weivel_reach_reported_at(record_of(core, plugin), 0);
+    CHECK(record != NULL && record->fix != NULL && record->fix[0] != '\0');
+
+    CHECK(ledger_has_fix(core) == 1);
+    if (record != NULL && record->fix != NULL) {
+        record->fix[0] = '\0';
+    }
+    CHECK(ledger_has_fix(core) == 0);
+    weivel_core_destroy(core);
+}
+
 int main(void) {
     delivers_a_late_registration_from_the_named_provider_to_a_want();
     delivers_a_late_registration_from_the_named_provider_to_a_watch();
@@ -831,5 +857,6 @@ int main(void) {
     a_long_text_is_never_cut_from_a_manifest_refusal();
     a_long_text_is_never_cut_from_a_registry_refusal();
     a_long_id_is_never_cut_from_an_unpolled_want();
+    a_ledger_refusal_answers_has_fix_from_the_fix_its_record_keeps();
     return check_summary("reach_test");
 }

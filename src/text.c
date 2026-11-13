@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 char *weivel_text_format(const char *format, ...) {
     va_list arguments;
@@ -18,4 +19,13 @@ char *weivel_text_format(const char *format, ...) {
     }
     va_end(arguments);
     return text;
+}
+
+char *weivel_text_copy(const char *text) {
+    size_t length = strlen(text) + 1;
+    char *copy = weivel_memory_allocate(length);
+    if (copy != NULL) {
+        memcpy(copy, text, length);
+    }
+    return copy;
 }

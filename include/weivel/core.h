@@ -1381,7 +1381,7 @@ typedef struct weivel_declaration_refusal {
     uint32_t code;
     /** The refusal's subject, the same text as `id`. Appended after `code`. */
     const char *subject;
-    /** 1, since every refusal of reach the core reports carries a fix. Appended after `subject`. */
+    /** 1 when the fix its reach event carried is non-empty, else 0. Appended after `subject`. */
     uint32_t has_fix;
 } weivel_declaration_refusal;
 
