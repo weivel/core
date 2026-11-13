@@ -148,6 +148,19 @@ void *weivel_events_copy_texts(size_t count, const char *const *texts, const cha
     return storage;
 }
 
+void *weivel_events_copy_refusal(const char *subject, const char *detail, const char *fix, const char **copies) {
+    const char *texts[3] = {subject, detail, fix};
+    void *storage = weivel_events_copy_texts(3, texts, copies);
+    if (storage != NULL && subject == NULL) {
+        copies[0] = NULL;
+    }
+    return storage;
+}
+
+uint32_t weivel_events_has_fix(const char *fix) {
+    return fix != NULL && fix[0] != '\0' ? 1u : 0u;
+}
+
 static weivel_event empty_event(uint32_t kind) {
     weivel_event event;
     memset(&event, 0, sizeof event);
@@ -166,17 +179,22 @@ weivel_status weivel_events_push_log(weivel_events *events, uint32_t level, cons
     return push(events, &event);
 }
 
-weivel_status weivel_events_push_refusal(weivel_events *events, uint32_t code, const char *detail, const char *fix) {
+_Static_assert(sizeof(weivel_refusal_event) <= WEIVEL_EVENT_PAYLOAD_WORDS * sizeof(uint64_t),
+               "a refusal event must fit the event's payload union");
+
+weivel_status weivel_events_push_refusal(weivel_events *events, uint32_t code, const char *subject, const char *detail,
+                                         const char *fix) {
     weivel_event event = empty_event(WEIVEL_EVENT_REFUSAL);
-    const char *texts[2] = {detail, fix};
-    const char *copies[2];
-    event.data.refusal.code = code;
-    event.storage = weivel_events_copy_texts(2, texts, copies);
+    const char *copies[3];
+    event.storage = weivel_events_copy_refusal(subject, detail, fix, copies);
     if (event.storage == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    event.data.refusal.detail = copies[0];
-    event.data.refusal.fix = copies[1];
+    event.data.refused.refusal.code = code;
+    event.data.refused.refusal.detail = copies[1];
+    event.data.refused.refusal.fix = copies[2];
+    event.data.refused.subject = copies[0];
+    event.data.refused.has_fix = weivel_events_has_fix(fix);
     return push(events, &event);
 }
 
@@ -187,22 +205,39 @@ weivel_status weivel_events_push_refusal(weivel_events *events, uint32_t code, c
 static const char *const rejected_without_detail = "memory ran out describing why this want was rejected";
 static const char *const rejected_without_fix = "read the refusal code, which is exact";
 
-void weivel_events_deliver_want(weivel_events *events, const weivel_want_event *settled, const char *detail,
-                                const char *fix) {
+_Static_assert(sizeof(weivel_want_event) <= WEIVEL_EVENT_PAYLOAD_WORDS * sizeof(uint64_t),
+               "a want event must fit the event's payload union");
+
+/** Copies a settlement's one text into storage the event owns; NULL, with the event carrying none, when it cannot. */
+static void keep_subject(weivel_event *event, const char *subject) {
+    if (subject != NULL) {
+        event->storage = weivel_events_copy_texts(1, &subject, &event->data.want.subject);
+        if (event->storage == NULL) {
+            event->data.want.subject = NULL;
+        }
+    }
+}
+
+void weivel_events_deliver_want(weivel_events *events, const weivel_want_event *settled, const char *subject,
+                                const char *detail, const char *fix) {
     weivel_event event = empty_event(WEIVEL_EVENT_WANT_SETTLED);
     event.data.want = *settled;
     event.data.want.refusal.detail = NULL;
     event.data.want.refusal.fix = NULL;
+    event.data.want.subject = NULL;
+    event.data.want.has_fix = 0;
     if (settled->implementation != 0) {
         event.data.want.refusal.code = WEIVEL_REFUSAL_NONE;
+        keep_subject(&event, subject);
         deliver(events, &event);
         return;
     }
-    const char *texts[2] = {detail, fix};
-    const char *copies[2] = {rejected_without_detail, rejected_without_fix};
-    event.storage = weivel_events_copy_texts(2, texts, copies);
-    event.data.want.refusal.detail = copies[0];
-    event.data.want.refusal.fix = copies[1];
+    const char *copies[3] = {NULL, rejected_without_detail, rejected_without_fix};
+    event.storage = weivel_events_copy_refusal(subject, detail, fix, copies);
+    event.data.want.subject = copies[0];
+    event.data.want.refusal.detail = copies[1];
+    event.data.want.refusal.fix = copies[2];
+    event.data.want.has_fix = weivel_events_has_fix(event.data.want.refusal.fix);
     deliver(events, &event);
 }
 
@@ -270,6 +305,9 @@ weivel_status weivel_events_push_capacity(weivel_events *events, const weivel_ca
     return push(events, &event);
 }
 
+_Static_assert(sizeof(weivel_reach_refusal) <= WEIVEL_EVENT_PAYLOAD_WORDS * sizeof(uint64_t),
+               "a reach refusal must fit the event's payload union");
+
 weivel_status weivel_events_push_reach(weivel_events *events, uint32_t kind, weivel_handle plugin, const char *id,
                                        uint32_t code, const char *detail, const char *fix) {
     weivel_event event = empty_event(WEIVEL_EVENT_REACH_REFUSED);
@@ -285,5 +323,7 @@ weivel_status weivel_events_push_reach(weivel_events *events, uint32_t kind, wei
     event.data.reach.refusal.code = code;
     event.data.reach.refusal.detail = copies[1];
     event.data.reach.refusal.fix = copies[2];
+    event.data.reach.subject = copies[0];
+    event.data.reach.has_fix = weivel_events_has_fix(fix);
     return push(events, &event);
 }

@@ -43,6 +43,9 @@ weivel_status weivel_manifest_copy(const weivel_manifest *callers, weivel_owned_
 
 void weivel_manifest_free(weivel_owned_manifest *owned);
 
+/** A caller's manifest's import name, or NULL when it gives none or an empty one: a refusal's subject. */
+const char *weivel_manifest_named(const weivel_manifest *callers);
+
 /** Whether a list of strings can be read: items present when counted, and no item NULL. */
 bool weivel_strings_readable(const weivel_strings *strings);
 

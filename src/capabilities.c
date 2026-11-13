@@ -123,7 +123,7 @@ static uint32_t watchers_of(const weivel_capability *capability) {
     return count;
 }
 
-static weivel_status hold(weivel_core *core, weivel_provision *provision, weivel_plugin *plugin);
+static void hold_prepared(weivel_core *core, weivel_provision *provision, weivel_plugin *plugin);
 
 /**
  * Tells every watch of the provision's capability what changed, from notifications the caller reserved. A watch
@@ -133,10 +133,8 @@ static void tell_watchers(weivel_core *core, weivel_provision *provision, uint32
     weivel_capability *capability = provision->capability;
     for (weivel_link *link = capability->watchers.next; link != &capability->watchers; link = link->next) {
         const weivel_capability_watch *watch = WEIVEL_RECORD_OF(link, weivel_capability_watch, by_capability);
-        if (change == WEIVEL_CAPABILITY_PROVIDED && hold(core, provision, watch->consumer) != WEIVEL_STATUS_OK) {
-            weivel_core_log(core, WEIVEL_LOG_ERROR,
-                            "memory ran out recording who holds a capability, so a watch was not told of it");
-            continue;
+        if (change == WEIVEL_CAPABILITY_PROVIDED) {
+            hold_prepared(core, provision, watch->consumer);
         }
         weivel_capability_event heard;
         heard.watch = watch->handle;
@@ -157,7 +155,7 @@ static weivel_status refuse_provided_twice(weivel_core *core, const char *id) {
     if (detail == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_status status = weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_PROVIDED_TWICE, detail,
+    weivel_status status = weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_PROVIDED_TWICE, id, detail,
                                                       "provide each capability once while the plugin activates");
     free(detail);
     return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_REFUSED : status;
@@ -307,10 +305,11 @@ static weivel_status refuse_mismatch(weivel_core *core, weivel_plugin *plugin, b
                         : weivel_text_format("add \"%s\" to the capabilities it provides in its manifest, or stop "
                                              "providing \"%s\"",
                                              mismatch.first, mismatch.first);
-    weivel_kept_refusal kept = {WEIVEL_REFUSAL_NONE, NULL, NULL};
+    const char *name = plugin->manifest.value.import_name;
+    weivel_kept_refusal kept = {WEIVEL_REFUSAL_NONE, NULL, NULL, NULL};
     weivel_status status = WEIVEL_STATUS_OUT_OF_MEMORY;
-    if (fix != NULL && weivel_kept_refusal_copy(&kept, WEIVEL_REFUSAL_ACTIVATION_MISMATCH, detail, fix)) {
-        status = weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_ACTIVATION_MISMATCH, detail, fix);
+    if (fix != NULL && weivel_kept_refusal_copy(&kept, WEIVEL_REFUSAL_ACTIVATION_MISMATCH, name, detail, fix)) {
+        status = weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_ACTIVATION_MISMATCH, name, detail, fix);
     }
     if (status == WEIVEL_STATUS_OK) {
         weivel_ledger_keep_refused_activation(plugin, &kept);
@@ -353,10 +352,10 @@ static weivel_status refuse_not_open(weivel_core *core, const weivel_plugin *plu
     if (detail == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_status status =
-        weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_PLUGIN_STATE, detail,
-                                   released ? "register its manifest again, and use the handle that answers"
-                                            : "open it again, and verify the activation that follows");
+    weivel_status status = weivel_events_push_refusal(
+        core->events, WEIVEL_REFUSAL_PLUGIN_STATE, plugin->manifest.value.import_name, detail,
+        released ? "register its manifest again, and use the handle that answers"
+                 : "open it again, and verify the activation that follows");
     free(detail);
     return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_REFUSED : status;
 }
@@ -478,13 +477,20 @@ static void revoke_holding(weivel_core *core, weivel_capability_holding *holding
     free(holding);
 }
 
+/**
+ * Records a holding inside a call that prepared one for it.
+ * @implNote Its status goes unread because it cannot fail: weivel_capabilities_prepare_holdings made the holding,
+ * its table room and its revocation before the call changed anything.
+ */
+static void hold_prepared(weivel_core *core, weivel_provision *provision, weivel_plugin *plugin) {
+    (void)hold(core, provision, plugin);
+}
+
 /** Records that `plugin` holds every verified implementation of `capability`, from holdings prepared for them all. */
 static void hold_all(weivel_core *core, const weivel_capability *capability, weivel_plugin *plugin) {
     for (const weivel_link *link = capability == NULL ? NULL : capability->verified.next;
          link != NULL && link != &capability->verified; link = link->next) {
-        if (hold(core, WEIVEL_RECORD_OF(link, weivel_provision, in_verified), plugin) != WEIVEL_STATUS_OK) {
-            weivel_core_log(core, WEIVEL_LOG_ERROR, "memory ran out recording who holds a capability");
-        }
+        hold_prepared(core, WEIVEL_RECORD_OF(link, weivel_provision, in_verified), plugin);
     }
 }
 

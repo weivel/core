@@ -16,16 +16,19 @@ static bool is_sized_answer(const weivel_support *answer) {
     return answer != NULL && answer->size >= WEIVEL_SUPPORT_FIRST_SIZE;
 }
 
-static weivel_status refuse_shape(weivel_support *answer, const weivel_manifest_problem *problem) {
-    const char *texts[2] = {problem->detail, problem->fix};
-    const char *copies[2];
-    answer->storage = weivel_events_copy_texts(2, texts, copies);
+static weivel_status refuse_shape(weivel_support *answer, const weivel_manifest *manifest,
+                                  const weivel_manifest_problem *problem) {
+    const char *copies[3];
+    answer->storage =
+        weivel_events_copy_refusal(weivel_manifest_named(manifest), problem->detail, problem->fix, copies);
     if (answer->storage == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
     answer->refusal.code = WEIVEL_REFUSAL_MALFORMED_MANIFEST;
-    answer->refusal.detail = copies[0];
-    answer->refusal.fix = copies[1];
+    answer->refusal.detail = copies[1];
+    answer->refusal.fix = copies[2];
+    answer->subject = copies[0];
+    answer->has_fix = weivel_events_has_fix(problem->fix);
     return WEIVEL_STATUS_OK;
 }
 
@@ -34,7 +37,7 @@ static weivel_status decide(const weivel_core *core, const weivel_manifest *mani
     weivel_manifest_problem problem;
     weivel_status status = weivel_manifest_copy(manifest, &owned, &problem);
     if (status == WEIVEL_STATUS_REFUSED) {
-        status = refuse_shape(answer, &problem);
+        status = refuse_shape(answer, manifest, &problem);
         weivel_manifest_problem_free(&problem);
         return status;
     }

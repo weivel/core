@@ -94,58 +94,95 @@ typedef uint64_t weivel_handle;
 /** One core instance. Opaque; created by weivel_core_create and owned by the caller until weivel_core_destroy. */
 typedef struct weivel_core weivel_core;
 
-/** Why the core refused something. */
+/**
+ * Why the core refused something. Each code says what its refusal's `subject` names, the text a struct carrying the
+ * refusal answers beside it; a code that names nothing leaves it NULL.
+ */
 typedef enum weivel_refusal_code {
     WEIVEL_REFUSAL_NONE = 0,
-    /** A call was malformed; detail names the call and what was wrong with it. */
+    /** A call was malformed; detail names the call and what was wrong with it. Names nothing. */
     WEIVEL_REFUSAL_MALFORMED_CALL = 1,
-    /** A handle named something that no longer exists, or never did. */
+    /** A handle named something that no longer exists, or never did. Names nothing. */
     WEIVEL_REFUSAL_STALE_HANDLE = 2,
-    /** A manifest's own shape is wrong (no import name, a NULL in a list, an id listed twice); detail says where. */
+    /**
+     * A manifest's own shape is wrong (no import name, a NULL in a list, an id listed twice); detail says where.
+     * Names the manifest's import name, or nothing when it has none.
+     */
     WEIVEL_REFUSAL_MALFORMED_MANIFEST = 3,
-    /** This host cannot load the manifest's plugin; the answer's axis says which check refused it. */
+    /**
+     * This host cannot load the manifest's plugin; the answer's axis says which check refused it. Names its import
+     * name.
+     */
     WEIVEL_REFUSAL_INCOMPATIBLE = 4,
-    /** A plugin with this import name is already registered on this core; detail names it. */
+    /** A plugin with this import name is already registered on this core; detail names it. Names the import name. */
     WEIVEL_REFUSAL_NAME_TAKEN = 5,
-    /** A plugin needs something mandatory that nothing in its activation set provides; detail names the need. */
+    /**
+     * A plugin needs something mandatory that nothing in its activation set provides; detail names the need. Names
+     * the needed id.
+     */
     WEIVEL_REFUSAL_UNMET_NEED = 6,
-    /** A plugin was listed more than once in one activation set; its later listings are refused. */
+    /**
+     * A plugin was listed more than once in one activation set; its later listings are refused. Names its import
+     * name.
+     */
     WEIVEL_REFUSAL_REPEATED_PLUGIN = 7,
-    /** A plugin's lifecycle does not allow the call: it was never opened, is open already, was released, or is not. */
+    /**
+     * A plugin's lifecycle does not allow the call: it was never opened, is open already, was released, or is not.
+     * Names its import name.
+     */
     WEIVEL_REFUSAL_PLUGIN_STATE = 8,
-    /** Another registered plugin that is not released already holds the identity a manifest names. */
+    /**
+     * Another registered plugin that is not released already holds the identity a manifest names. Names the
+     * identity.
+     */
     WEIVEL_REFUSAL_IDENTITY_TAKEN = 9,
-    /** A plugin registered a service id outside its namespace that is not well known. */
+    /** A plugin registered a service id outside its namespace that is not well known. Names the service id. */
     WEIVEL_REFUSAL_OUTSIDE_NAMESPACE = 10,
-    /** A plugin registered a service id another owner already holds. */
+    /** A plugin registered a service id another owner already holds. Names the service id. */
     WEIVEL_REFUSAL_SERVICE_TAKEN = 11,
-    /** A plugin reached for a service it neither consumes nor provides in its manifest. */
+    /** A plugin reached for a service it neither consumes nor provides in its manifest. Names the id reached for. */
     WEIVEL_REFUSAL_UNDECLARED = 12,
-    /** A plugin reached for a service it binds to one provider while another owner provides it. */
+    /**
+     * A plugin reached for a service it binds to one provider while another owner provides it. Names the id reached
+     * for.
+     */
     WEIVEL_REFUSAL_WRONG_PROVIDER = 13,
-    /** A plugin was stopped while it waited, or asked to wait after it stopped. */
+    /** A plugin was stopped while it waited, or asked to wait after it stopped. Names the service id it waited for. */
     WEIVEL_REFUSAL_STOPPED = 14,
-    /** A want's deadline passed before a service it accepts was registered. */
+    /** A want's deadline passed before a service it accepts was registered. Names the service id it waited for. */
     WEIVEL_REFUSAL_TIMED_OUT = 15,
     /**
      * A constrained want spent its budget and no provider met its constraints: nothing provided the service, or it
-     * does not degrade. Detail names the constraints and what was offered.
+     * does not degrade. Detail names the constraints and what was offered. Names the first of the want's constraints
+     * that what its provider last offered does not meet, or its first constraint when nothing provides the service
+     * or the offer meets them all.
      */
     WEIVEL_REFUSAL_UNMET_CONSTRAINT = 16,
-    /** A degradable want's provider would serve neither its constraints nor an unconstrained ask. */
+    /**
+     * A degradable want's provider would serve neither its constraints nor an unconstrained ask. Names the service id
+     * it waited for.
+     */
     WEIVEL_REFUSAL_NOT_SERVED = 17,
     /**
      * A plugin's activation provided fewer capabilities than its manifest declares, or more; detail names each one
-     * missing or extra, and fix the first of them.
+     * missing or extra, and fix the first of them. Names the plugin's import name.
      */
     WEIVEL_REFUSAL_ACTIVATION_MISMATCH = 18,
-    /** A plugin provided a capability it had already provided. */
+    /** A plugin provided a capability it had already provided. Names the capability id. */
     WEIVEL_REFUSAL_PROVIDED_TWICE = 19
 } weivel_refusal_code;
 
 /**
  * A refusal, as a value. `detail` says what happened and `fix` what would make it succeed, both English UTF-8.
- * Both strings belong to the event carrying the refusal until weivel_event_release.
+ * Both strings belong to the struct carrying the refusal until that struct's release.
+ *
+ * Every struct carrying a refusal also answers, after its last field, `subject`, what the refusal is about as its
+ * code says, and `has_fix`, 1 when `fix` is non-empty and 0 otherwise, so a caller keys on what was refused without
+ * reading English. A refusal whose code is NONE has a NULL subject and no fix.
+ *
+ * @implNote The two are appended to each carrier, never here: this struct is embedded by value ahead of later
+ * fields (weivel_want_event's `degraded`) and inside an element that never grows (weivel_plugin_refusal), so growing
+ * it would move fields already published.
  */
 typedef struct weivel_refusal {
     uint32_t code;
@@ -168,13 +205,15 @@ typedef struct weivel_log_event {
     const char *text;
 } weivel_log_event;
 
-/** What an event reports. New kinds are only appended; a caller ignores, and still releases, a kind it does not know. */
+/**
+ * What an event reports. New kinds are only appended; a caller ignores, and still releases, a kind it does not know.
+ */
 typedef enum weivel_event_kind {
     /** No event: what weivel_next_event leaves when the queue is empty, and what release leaves behind. */
     WEIVEL_EVENT_NONE = 0,
     /** A diagnostic; the payload is `data.log`. */
     WEIVEL_EVENT_LOG = 1,
-    /** A refusal; the payload is `data.refusal`. */
+    /** A refusal; the payload is `data.refusal`, and `data.refused` reads it with its subject and has_fix. */
     WEIVEL_EVENT_REFUSAL = 2,
     /** A want settled, with a service or with a refusal, exactly once; the payload is `data.want`. */
     WEIVEL_EVENT_WANT_SETTLED = 3,
@@ -210,6 +249,14 @@ typedef struct weivel_want_event {
      * before. 0 otherwise. Appended after the event's first shape.
      */
     uint32_t degraded;
+    /**
+     * A rejected want's subject (see weivel_refusal); for a degraded one, the constraint it accepted unmet, chosen
+     * as WEIVEL_REFUSAL_UNMET_CONSTRAINT chooses it, so the WARNING log's text need never be read; NULL for any
+     * other settlement, and for a rejection whose refusal texts memory could not copy. Appended after `degraded`.
+     */
+    const char *subject;
+    /** 1 when `refusal.fix` is non-empty, else 0, so 0 for every want not rejected. Appended after `subject`. */
+    uint32_t has_fix;
 } weivel_want_event;
 
 /** What a watch heard. */
@@ -247,7 +294,23 @@ typedef struct weivel_reach_refusal {
     weivel_handle plugin;
     const char *id;
     weivel_refusal refusal;
+    /** The refusal's subject, the same text as `id`. Appended after `refusal`. */
+    const char *subject;
+    /** 1 when `refusal.fix` is non-empty, else 0. Appended after `subject`. */
+    uint32_t has_fix;
 } weivel_reach_refusal;
+
+/**
+ * A refusal event's payload read with what it is about: `refusal` is the very `data.refusal` the event carries, and
+ * the fields after it are appended to that payload.
+ */
+typedef struct weivel_refusal_event {
+    weivel_refusal refusal;
+    /** The refusal's subject (see weivel_refusal). */
+    const char *subject;
+    /** 1 when `refusal.fix` is non-empty, else 0. */
+    uint32_t has_fix;
+} weivel_refusal_event;
 
 /** One named number: an attribute a service advertises, or a constraint a consumer sets on it. */
 typedef struct weivel_number {
@@ -343,6 +406,7 @@ typedef struct weivel_event {
         weivel_reach_refusal reach;
         weivel_capacity_event capacity;
         weivel_capability_event capability;
+        weivel_refusal_event refused;
         uint64_t reserved[WEIVEL_EVENT_PAYLOAD_WORDS];
     } data;
 } weivel_event;
@@ -594,6 +658,10 @@ typedef struct weivel_support {
     uint32_t axis;
     weivel_refusal refusal;
     void *storage;
+    /** The refusal's subject (see weivel_refusal), NULL when supported. Appended after `storage`. */
+    const char *subject;
+    /** 1 when `refusal.fix` is non-empty, else 0. Appended after `subject`. */
+    uint32_t has_fix;
 } weivel_support;
 
 /**
@@ -671,6 +739,13 @@ typedef struct weivel_plugin_refusal {
     weivel_refusal refusal;
 } weivel_plugin_refusal;
 
+/** What one of an activation plan's refusals is about: its subject (see weivel_refusal) and whether it has a fix. */
+typedef struct weivel_refusal_subject {
+    const char *subject;
+    /** 1 when the refusal's `fix` is non-empty, else 0. */
+    uint32_t has_fix;
+} weivel_refusal_subject;
+
 /**
  * The answer to weivel_plan_activation, filled into a struct the caller owns. Every array and text lives in
  * `storage`, private to the core, until weivel_activation_plan_release; an empty array is NULL with count 0.
@@ -683,6 +758,7 @@ typedef struct weivel_plugin_refusal {
  * - `refusals`: the plugins that will not start: a handle that names no plugin (WEIVEL_REFUSAL_STALE_HANDLE), a
  *   plugin listed again (WEIVEL_REFUSAL_REPEATED_PLUGIN), then each one whose mandatory need nothing meets
  *   (WEIVEL_REFUSAL_UNMET_NEED), in the order they were found.
+ * - `refusal_subjects`: one entry per refusal, at the same index, `refusal_count` of them, appended after `storage`.
  *
  * Every array here is of the kind whose elements never grow (see Answers at the head of this file): a caller indexes
  * them at its own compiled stride, and anything a later version adds to a plan arrives as a new array appended to
@@ -699,6 +775,7 @@ typedef struct weivel_activation_plan {
     const weivel_plugin_refusal *refusals;
     uint32_t refusal_count;
     void *storage;
+    const weivel_refusal_subject *refusal_subjects;
 } weivel_activation_plan;
 
 /**
@@ -965,10 +1042,10 @@ typedef struct weivel_want_options {
  *    Nothing is carried from one poll to the next: a poll the provider does not answer in time is "not right now".
  * 2. When those attributes meet every constraint, under the host's vocabulary, a second question asks whether the
  *    provider serves the consumer under them, and a yes settles the want with that registration.
- * 3. After the last poll of a budgeted want the budget is spent. A want that does not degrade, or whose service nothing provides, is
- *    rejected with WEIVEL_REFUSAL_UNMET_CONSTRAINT. A degradable one asks once more under its constraints, then
- *    unconstrained, each question answerable for `poll_millis`, and settles degraded with the first yes, or is
- *    rejected with WEIVEL_REFUSAL_NOT_SERVED.
+ * 3. After the last poll of a budgeted want the budget is spent. A want that does not degrade, or whose service
+ *    nothing provides, is rejected with WEIVEL_REFUSAL_UNMET_CONSTRAINT. A degradable one asks once more under its
+ *    constraints, then unconstrained, each question answerable for `poll_millis`, and settles degraded with the first
+ *    yes, or is rejected with WEIVEL_REFUSAL_NOT_SERVED.
  *
  * Every end of a poll or question left unanswered is a deadline weivel_next_deadline reports and weivel_advance
  * acts on; a poll whose time has wholly passed by then is skipped, never asked late. A constraint the vocabulary
@@ -1153,12 +1230,11 @@ typedef struct weivel_capability_list {
  *
  * The holder rule is the services' rule (weivel_unregister): a plugin holds each implementation this call or a
  * capability watch hearing it provided hands it, once however often, until the implementation is withdrawn or the
- * plugin is released or quarantined. A
- * withdrawal, when its provider is quarantined, released or forgotten, revokes it to every holder by one
- * WEIVEL_EVENT_REVOKED each, before any watch hears it withdrawn; a plugin that holds and watches gets both. A
- * plugin released or quarantined has what it holds revoked to it in the same call, and a released plugin's late
- * `all` holds again until the implementation goes or the plugin is forgotten. When a holding cannot be recorded,
- * the call answers WEIVEL_STATUS_OUT_OF_MEMORY and hands nothing over.
+ * plugin is released or quarantined. A withdrawal, when its provider is quarantined, released or forgotten, revokes
+ * it to every holder by one WEIVEL_EVENT_REVOKED each, before any watch hears it withdrawn; a plugin that holds and
+ * watches gets both. A plugin released or quarantined has what it holds revoked to it in the same call, and a
+ * released plugin's late `all` holds again until the implementation goes or the plugin is forgotten. When a holding
+ * cannot be recorded, the call answers WEIVEL_STATUS_OUT_OF_MEMORY and hands nothing over.
  *
  * @param list the caller's struct with `size` set and nothing held; on WEIVEL_STATUS_OK it must be passed to
  * weivel_capability_list_release.
@@ -1251,6 +1327,13 @@ typedef struct weivel_ledger_row {
      * `services_consumed` is for services. Appended after `storage`.
      */
     weivel_strings capabilities_consumed;
+    /**
+     * The subject of `refusal` (see weivel_refusal): the import name for a refused activation, NULL for a reason
+     * weivel_quarantine_plugin was given, which names none. Appended after `capabilities_consumed`.
+     */
+    const char *subject;
+    /** 1 when `refusal.fix` is non-empty, else 0. Appended after `subject`. */
+    uint32_t has_fix;
 } weivel_ledger_row;
 
 /**
@@ -1265,6 +1348,10 @@ typedef struct weivel_declaration_refusal {
     const char *id;
     /** A weivel_refusal_code. Appended after `id`. */
     uint32_t code;
+    /** The refusal's subject, the same text as `id`. Appended after `code`. */
+    const char *subject;
+    /** 1, since every refusal of reach the core reports carries a fix. Appended after `subject`. */
+    uint32_t has_fix;
 } weivel_declaration_refusal;
 
 /**

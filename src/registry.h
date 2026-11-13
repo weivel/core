@@ -212,16 +212,17 @@ uint32_t weivel_reach_reported_count(const weivel_plugin *plugin);
 const weivel_reach_record *weivel_reach_reported_at(const weivel_plugin *plugin, uint32_t index);
 
 /**
- * Settles a want with a registration, which its consumer then holds, `degraded` when it is a constrained want's
- * acceptance of a provider that never met its constraints; the settlement is the want's own reservation. On
- * WEIVEL_STATUS_OUT_OF_MEMORY the holding could not be recorded, so the want is left exactly as it was, still
- * waiting.
+ * Settles a want with a registration, which its consumer then holds; the settlement is the want's own reservation.
+ * `degraded_on` is NULL, or for a constrained want's acceptance of a provider that never met its constraints, the
+ * constraint the settlement names. On WEIVEL_STATUS_OUT_OF_MEMORY the holding could not be recorded, so the want is
+ * left exactly as it was, still waiting.
  */
 weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration,
-                                    bool degraded);
+                                    const char *degraded_on);
 
-/** Rejects a want with a refusal, delivered from the want's own reservation. */
-void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, const char *detail, const char *fix);
+/** Rejects a want with a refusal about `subject`, delivered from the want's own reservation. */
+void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, const char *subject,
+                           const char *detail, const char *fix);
 
 /** Withdraws a want without settling it, giving back its reservation. */
 void weivel_waiting_withdraw(weivel_core *core, weivel_want *want);
