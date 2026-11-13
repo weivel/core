@@ -30,10 +30,10 @@ static void unlink_want(weivel_core *core, weivel_want *want) {
     }
 }
 
-/** Ends a want whose handle was answered; settling, rejecting and withdrawing all start here. */
-static void retire(weivel_core *core, weivel_want *want) {
+/** Ends a want whose handle was answered, `ending` the weivel_handle_condition weivel_handle_state answers after. */
+static void retire(weivel_core *core, weivel_want *want, uint32_t ending) {
     unlink_want(core, want);
-    weivel_handles_release(core->handles, want->handle, WEIVEL_RECORD_WANT);
+    weivel_handles_release_ending(core->handles, want->handle, WEIVEL_RECORD_WANT, ending);
 }
 
 /** Takes back a want the call now running made and never answered, its handle and reservation included. */
@@ -44,29 +44,45 @@ static void discard(weivel_core *core, weivel_want *want) {
     free(want);
 }
 
-weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration,
+/**
+ * A want's settlement as an event, before any text is copied.
+ * @implNote Delivered before the want retires, since retiring may free the slot whose id the subject names.
+ */
+static weivel_want_event settlement(const weivel_want *want, weivel_handle implementation, uint32_t code,
                                     bool degraded) {
+    weivel_want_event settled;
+    memset(&settled, 0, sizeof settled);
+    settled.want = want->handle;
+    settled.plugin = want->consumer->handle;
+    settled.implementation = implementation;
+    settled.refusal.code = code;
+    settled.degraded = degraded ? 1u : 0u;
+    return settled;
+}
+
+weivel_status weivel_waiting_settle(weivel_core *core, weivel_want *want, weivel_registration *registration,
+                                    const char *degraded_on) {
     weivel_status status = weivel_registry_hold(core, registration, want->consumer);
     if (status != WEIVEL_STATUS_OK) {
         return status;
     }
-    retire(core, want);
-    weivel_want_event settled = {want->handle, want->consumer->handle, registration->handle, {0, NULL, NULL},
-                                 degraded ? 1u : 0u};
-    weivel_events_deliver_want(core->events, &settled, NULL, NULL);
+    weivel_want_event settled = settlement(want, registration->handle, WEIVEL_REFUSAL_NONE, degraded_on != NULL);
+    weivel_events_deliver_want(core->events, &settled, degraded_on, NULL, NULL);
+    retire(core, want, WEIVEL_HANDLE_SETTLED);
     free(want);
     return WEIVEL_STATUS_OK;
 }
 
-void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, const char *detail, const char *fix) {
-    retire(core, want);
-    weivel_want_event rejected = {want->handle, want->consumer->handle, 0, {code, NULL, NULL}, 0};
-    weivel_events_deliver_want(core->events, &rejected, detail, fix);
+void weivel_waiting_reject(weivel_core *core, weivel_want *want, uint32_t code, const char *subject,
+                           const char *detail, const char *fix) {
+    weivel_want_event rejected = settlement(want, 0, code, false);
+    weivel_events_deliver_want(core->events, &rejected, subject, detail, fix);
+    retire(core, want, WEIVEL_HANDLE_SETTLED);
     free(want);
 }
 
 void weivel_waiting_withdraw(weivel_core *core, weivel_want *want) {
-    retire(core, want);
+    retire(core, want, WEIVEL_HANDLE_WITHDRAWN);
     weivel_events_unreserve(core->events, 1);
     free(want);
 }
@@ -118,7 +134,7 @@ void weivel_waiting_arrival(weivel_core *core, weivel_slot *slot) {
         weivel_link *next = link->next;
         weivel_want *want = WEIVEL_RECORD_OF(link, weivel_want, by_slot);
         if (weivel_registry_accepts(want->provider, registration) &&
-            weivel_waiting_settle(core, want, registration, false) != WEIVEL_STATUS_OK) {
+            weivel_waiting_settle(core, want, registration, NULL) != WEIVEL_STATUS_OK) {
             weivel_core_log(core, WEIVEL_LOG_ERROR, "memory ran out settling a want, so it still waits");
         }
         link = next;
@@ -130,7 +146,7 @@ static void time_out(weivel_core *core, weivel_want *want) {
                                       want->timeout_millis, want->slot->id);
     char *fix =
         weivel_text_format("install a plugin that provides \"%s\", or get it and carry on without it", want->slot->id);
-    weivel_waiting_reject(core, want, WEIVEL_REFUSAL_TIMED_OUT, detail, fix);
+    weivel_waiting_reject(core, want, WEIVEL_REFUSAL_TIMED_OUT, want->slot->id, detail, fix);
     free(fix);
     free(detail);
 }
@@ -207,14 +223,14 @@ static weivel_status refuse_unpolled(weivel_core *core, const char *id) {
 static weivel_status decide(weivel_core *core, weivel_want *want, const char *id, const weivel_reach *reach,
                             const weivel_want_options *options) {
     if (reach->code != WEIVEL_REFUSAL_NONE) {
-        weivel_waiting_reject(core, want, reach->code, reach->detail, reach->fix);
+        weivel_waiting_reject(core, want, reach->code, id, reach->detail, reach->fix);
         return WEIVEL_STATUS_OK;
     }
     if (reach->late) {
         weivel_reach_log_late(core, want->consumer, "want", id);
         weivel_reach stopped;
         weivel_reach_stopped(id, &stopped);
-        weivel_waiting_reject(core, want, WEIVEL_REFUSAL_STOPPED, stopped.detail, stopped.fix);
+        weivel_waiting_reject(core, want, WEIVEL_REFUSAL_STOPPED, id, stopped.detail, stopped.fix);
         weivel_reach_dispose(&stopped);
         return WEIVEL_STATUS_OK;
     }
@@ -227,7 +243,7 @@ static weivel_status decide(weivel_core *core, weivel_want *want, const char *id
         return weivel_constraints_start(core, want, reach->wanted, options);
     }
     if (want->slot->registration != NULL) {
-        return weivel_waiting_settle(core, want, want->slot->registration, false);
+        return weivel_waiting_settle(core, want, want->slot->registration, NULL);
     }
     return enqueue(core, want, options);
 }

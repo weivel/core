@@ -25,6 +25,10 @@ typedef struct seen {
     char id[128];
     char detail[512];
     char fix[512];
+    /** The refusal's subject, empty when `named` is 0 because the subject was NULL. */
+    char about[128];
+    uint32_t named;
+    uint32_t has_fix;
 } seen;
 
 #define JOURNAL_CAPACITY 256
@@ -46,6 +50,12 @@ static inline void note_refusal(seen *item, const weivel_refusal *refusal) {
     copy_text(item->fix, sizeof item->fix, refusal->fix);
 }
 
+static inline void note_subject(seen *item, const char *subject, uint32_t has_fix) {
+    item->named = subject != NULL;
+    copy_text(item->about, sizeof item->about, subject);
+    item->has_fix = has_fix;
+}
+
 static inline void note(seen *item, const weivel_event *event) {
     memset(item, 0, sizeof *item);
     item->kind = event->kind;
@@ -56,6 +66,7 @@ static inline void note(seen *item, const weivel_event *event) {
         break;
     case WEIVEL_EVENT_REFUSAL:
         note_refusal(item, &event->data.refusal);
+        note_subject(item, event->data.refused.subject, event->data.refused.has_fix);
         break;
     case WEIVEL_EVENT_WANT_SETTLED:
         item->subject = event->data.want.want;
@@ -63,6 +74,7 @@ static inline void note(seen *item, const weivel_event *event) {
         item->implementation = event->data.want.implementation;
         item->degraded = event->data.want.degraded;
         note_refusal(item, &event->data.want.refusal);
+        note_subject(item, event->data.want.subject, event->data.want.has_fix);
         break;
     case WEIVEL_EVENT_CAPACITY_WANTED:
         item->subject = event->data.capacity.want;
@@ -97,6 +109,7 @@ static inline void note(seen *item, const weivel_event *event) {
         item->change = event->data.reach.kind;
         copy_text(item->id, sizeof item->id, event->data.reach.id);
         note_refusal(item, &event->data.reach.refusal);
+        note_subject(item, event->data.reach.subject, event->data.reach.has_fix);
         break;
     default:
         break;

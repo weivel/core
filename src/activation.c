@@ -27,6 +27,8 @@ typedef struct found_refusal {
     uint32_t code;
     char *detail;
     char *fix;
+    /** Borrowed from a registered manifest, which outlives the planning call; NULL when the refusal names nothing. */
+    const char *subject;
 } found_refusal;
 
 typedef struct refusals {
@@ -116,7 +118,8 @@ static char *joined(const char *before, const char *middle, const char *after) {
     return text;
 }
 
-static bool add_refusal(refusal_list *list, weivel_handle plugin, uint32_t code, char *detail, char *fix) {
+static bool add_refusal(refusal_list *list, weivel_handle plugin, uint32_t code, const char *subject, char *detail,
+                        char *fix) {
     if (detail == NULL || fix == NULL) {
         free(detail);
         free(fix);
@@ -134,7 +137,7 @@ static bool add_refusal(refusal_list *list, weivel_handle plugin, uint32_t code,
         list->items = items;
         list->capacity = capacity;
     }
-    found_refusal refusal = {plugin, code, detail, fix};
+    found_refusal refusal = {plugin, code, detail, fix, subject};
     list->items[list->count++] = refusal;
     return true;
 }
@@ -142,18 +145,18 @@ static bool add_refusal(refusal_list *list, weivel_handle plugin, uint32_t code,
 static bool refuse_stale(planner_state *planner, weivel_handle handle) {
     char detail[96];
     snprintf(detail, sizeof detail, "the handle %" PRIu64 " names no plugin on this core", (uint64_t)handle);
-    return add_refusal(&planner->refusals, handle, WEIVEL_REFUSAL_STALE_HANDLE, joined(detail, "", ""),
+    return add_refusal(&planner->refusals, handle, WEIVEL_REFUSAL_STALE_HANDLE, NULL, joined(detail, "", ""),
                        joined("pass only handles weivel_register_manifest answered on this core", "", ""));
 }
 
 static bool refuse_repeated(planner_state *planner, weivel_handle handle, const char *name) {
-    return add_refusal(&planner->refusals, handle, WEIVEL_REFUSAL_REPEATED_PLUGIN,
+    return add_refusal(&planner->refusals, handle, WEIVEL_REFUSAL_REPEATED_PLUGIN, name,
                        joined("the plugin \"", name, "\" is listed more than once"),
                        joined("list each plugin once", "", ""));
 }
 
 static bool refuse_unmet_need(planner_state *planner, weivel_handle handle, const char *need) {
-    return add_refusal(&planner->refusals, handle, WEIVEL_REFUSAL_UNMET_NEED,
+    return add_refusal(&planner->refusals, handle, WEIVEL_REFUSAL_UNMET_NEED, need,
                        joined("requires \"", need, "\", which nothing here provides"),
                        joined("install something that provides \"", need, "\", or mark the requirement optional"));
 }
@@ -638,6 +641,7 @@ static void free_planner(planner_state *planner, uint32_t capacity) {
 /** The answer's one allocation, laid out in sections each rounded to 8 bytes, which aligns every element type. */
 typedef struct layout {
     size_t refusals;
+    size_t subjects;
     size_t cycles;
     size_t edges;
     size_t order;
@@ -665,10 +669,13 @@ static answer_layout lay_out(const planner_state *planner, uint32_t edges) {
     answer_layout layout;
     size_t texts = 0;
     for (uint32_t index = 0; index < planner->refusals.count; index++) {
-        texts += strlen(planner->refusals.items[index].detail) + strlen(planner->refusals.items[index].fix) + 2;
+        const found_refusal *found = &planner->refusals.items[index];
+        texts += strlen(found->detail) + strlen(found->fix) + 2;
+        texts += found->subject == NULL ? 0 : strlen(found->subject) + 1;
     }
     layout.refusals = 0;
-    layout.cycles = layout.refusals + rounded((size_t)planner->refusals.count * sizeof(weivel_plugin_refusal));
+    layout.subjects = layout.refusals + rounded((size_t)planner->refusals.count * sizeof(weivel_plugin_refusal));
+    layout.cycles = layout.subjects + rounded((size_t)planner->refusals.count * sizeof(weivel_refusal_subject));
     layout.edges = layout.cycles + rounded((size_t)planner->cycle_ends.count * sizeof(weivel_cycle));
     layout.order = layout.edges + rounded((size_t)edges * sizeof(weivel_edge));
     layout.members = layout.order + rounded((size_t)planner->order.count * sizeof(weivel_handle));
@@ -685,13 +692,16 @@ static const char *copy_text(char **cursor, const char *text) {
     return copy;
 }
 
-static void fill_refusals(const planner_state *planner, weivel_plugin_refusal *refusals, char *texts) {
+static void fill_refusals(const planner_state *planner, weivel_plugin_refusal *refusals,
+                          weivel_refusal_subject *subjects, char *texts) {
     for (uint32_t index = 0; index < planner->refusals.count; index++) {
         const found_refusal *found = &planner->refusals.items[index];
         refusals[index].plugin = found->plugin;
         refusals[index].refusal.code = found->code;
         refusals[index].refusal.detail = copy_text(&texts, found->detail);
         refusals[index].refusal.fix = copy_text(&texts, found->fix);
+        subjects[index].subject = found->subject == NULL ? NULL : copy_text(&texts, found->subject);
+        subjects[index].has_fix = weivel_events_has_fix(found->fix);
     }
 }
 
@@ -735,11 +745,12 @@ static weivel_status answer_plan(const planner_state *planner, weivel_activation
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
     weivel_plugin_refusal *refusals = section(storage, layout.refusals, planner->refusals.count);
+    weivel_refusal_subject *subjects = section(storage, layout.subjects, planner->refusals.count);
     weivel_cycle *cycles = section(storage, layout.cycles, planner->cycle_ends.count);
     weivel_edge *edge_items = section(storage, layout.edges, edges);
     weivel_handle *order = section(storage, layout.order, planner->order.count);
     weivel_handle *members = section(storage, layout.members, planner->cycle_members.count);
-    fill_refusals(planner, refusals, storage + layout.texts);
+    fill_refusals(planner, refusals, subjects, storage + layout.texts);
     fill_cycles(planner, cycles, members);
     fill_edges(planner, edge_items);
     for (uint32_t index = 0; index < planner->order.count; index++) {
@@ -748,6 +759,7 @@ static weivel_status answer_plan(const planner_state *planner, weivel_activation
     answer->storage = storage;
     answer->refusals = refusals;
     answer->refusal_count = planner->refusals.count;
+    answer->refusal_subjects = subjects;
     answer->cycles = cycles;
     answer->cycle_count = planner->cycle_ends.count;
     answer->edges = edge_items;

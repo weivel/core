@@ -588,7 +588,42 @@ static weivel_status picky_is_served(world *made) {
     return weivel_report_capacity(made->core, made->want, made->registration, &serves, 0, NULL);
 }
 
+/** Whether a log the queue holds speaks of a question a want could not put; drains the queue. */
+static bool logs_an_unput_question(weivel_core *core) {
+    bool found = false;
+    weivel_event event = WEIVEL_INIT(weivel_event);
+    while (weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_OK) {
+        found = found || (event.kind == WEIVEL_EVENT_LOG && strstr(event.data.log.text, "never put") != NULL);
+        weivel_event_release(&event);
+    }
+    return found;
+}
+
+/** A constrained want whose start runs out of memory is discarded whole, so no log speaks of its question. */
+static void a_discarded_want_leaves_no_log_of_its_question(void) {
+    uint32_t discarded = 0;
+    for (uint64_t nth = 1; nth < 1000; nth++) {
+        world made;
+        world_with_registration(&made);
+        drain_away(made.core);
+        weivel_memory_fail_at(nth);
+        weivel_status status = picky_want(&made);
+        bool failed = weivel_memory_failed();
+        weivel_memory_fail_at(0);
+        if (status == WEIVEL_STATUS_OUT_OF_MEMORY) {
+            discarded++;
+            CHECK(!logs_an_unput_question(made.core));
+        }
+        weivel_core_destroy(made.core);
+        if (!failed) {
+            break;
+        }
+    }
+    CHECK(discarded > 0);
+}
+
 int main(void) {
+    a_discarded_want_leaves_no_log_of_its_question();
     sweep("register a manifest", make_world, register_a_manifest);
     sweep("register a malformed manifest", make_world, register_a_malformed_manifest);
     supports_answers_a_whole_refusal_or_none();

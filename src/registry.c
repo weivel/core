@@ -209,12 +209,13 @@ static void revoke_holding(weivel_core *core, weivel_holding *holding) {
     free(holding);
 }
 
-static void log_unheld(weivel_core *core, const char *id) {
-    char *text =
-        weivel_text_format("memory ran out recording who holds service \"%s\", so it was not handed over", id);
-    weivel_core_log(core, WEIVEL_LOG_ERROR,
-                    text == NULL ? "memory ran out recording who holds a service, so it was not handed over" : text);
-    free(text);
+/**
+ * Records a holding inside a call that prepared one for it.
+ * @implNote Its status goes unread because it cannot fail: weivel_registry_prepare_holdings made the holding, its
+ * table room and its revocation before the call changed anything.
+ */
+static void hold_prepared(weivel_core *core, weivel_registration *registration, weivel_plugin *plugin) {
+    (void)weivel_registry_hold(core, registration, plugin);
 }
 
 uint32_t weivel_registry_watchers(const weivel_slot *slot) {
@@ -232,10 +233,8 @@ static void tell_watchers(weivel_core *core, weivel_registration *registration, 
         if (!weivel_registry_accepts(watch->provider, registration)) {
             continue;
         }
-        if (change == WEIVEL_CHANGE_REGISTERED &&
-            weivel_registry_hold(core, registration, watch->consumer) != WEIVEL_STATUS_OK) {
-            log_unheld(core, registration->slot->id);
-            continue;
+        if (change == WEIVEL_CHANGE_REGISTERED) {
+            hold_prepared(core, registration, watch->consumer);
         }
         weivel_watch_event heard = {watch->handle, watch->consumer->handle, registration->handle, change};
         weivel_core_notify_watch(core, &heard);
@@ -263,7 +262,7 @@ void weivel_registry_unregister(weivel_core *core, weivel_registration *registra
 static void stop_watch(weivel_core *core, weivel_watch *watch) {
     weivel_list_remove(&watch->by_slot);
     weivel_list_remove(&watch->by_consumer);
-    weivel_handles_release(core->handles, watch->handle, WEIVEL_RECORD_WATCH);
+    weivel_handles_release_ending(core->handles, watch->handle, WEIVEL_RECORD_WATCH, WEIVEL_HANDLE_STOPPED);
     weivel_slot *slot = watch->slot;
     free(watch);
     core->registry->watch_count--;
@@ -289,7 +288,7 @@ void weivel_registry_strip(weivel_core *core, weivel_plugin *plugin) {
         weivel_want *want = WEIVEL_RECORD_OF(plugin->wants.next, weivel_want, by_consumer);
         weivel_reach stopped;
         weivel_reach_stopped(want->slot->id, &stopped);
-        weivel_waiting_reject(core, want, WEIVEL_REFUSAL_STOPPED, stopped.detail, stopped.fix);
+        weivel_waiting_reject(core, want, WEIVEL_REFUSAL_STOPPED, want->slot->id, stopped.detail, stopped.fix);
         weivel_reach_dispose(&stopped);
     }
     while (!weivel_list_empty(&plugin->holdings)) {
@@ -359,7 +358,8 @@ static weivel_status refuse_namespace(weivel_core *core, const weivel_plugin *pl
                                                    plugin->manifest.value.import_name, name, known);
     weivel_status status = WEIVEL_STATUS_OUT_OF_MEMORY;
     if (detail != NULL && fix != NULL &&
-        weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_OUTSIDE_NAMESPACE, detail, fix) == WEIVEL_STATUS_OK) {
+        weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_OUTSIDE_NAMESPACE, id, detail, fix) ==
+            WEIVEL_STATUS_OK) {
         status = WEIVEL_STATUS_REFUSED;
     }
     free(fix);
@@ -375,7 +375,7 @@ static weivel_status refuse_taken(weivel_core *core, const weivel_registration *
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
     weivel_status status = weivel_events_push_refusal(
-        core->events, WEIVEL_REFUSAL_SERVICE_TAKEN, detail,
+        core->events, WEIVEL_REFUSAL_SERVICE_TAKEN, holder->slot->id, detail,
         "disable one of the two plugins, or have each register its own namespaced id");
     free(detail);
     return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_REFUSED : status;
@@ -532,7 +532,7 @@ static weivel_status refuse_stale(weivel_core *core, weivel_handle handle) {
     snprintf(detail, sizeof detail, "the handle %" PRIu64 " names no registration, watch or want on this core",
              handle);
     weivel_status status = weivel_events_push_refusal(
-        core->events, WEIVEL_REFUSAL_STALE_HANDLE, detail,
+        core->events, WEIVEL_REFUSAL_STALE_HANDLE, NULL, detail,
         "pass a handle a registration, a watch or a want answered, and only until what it names has ended");
     return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_REFUSED : status;
 }

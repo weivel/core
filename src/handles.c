@@ -12,6 +12,10 @@ typedef struct handle_slot {
     uint32_t next_free;
     bool occupied;
     void *record;
+    /** The generation whose handle ended last, 0 for none, since no handle has generation 0. */
+    uint32_t ended_generation;
+    /** How it ended, 0 when the release gave no ending. */
+    uint32_t ending;
 } handle_slot;
 
 struct weivel_handles {
@@ -78,6 +82,8 @@ static bool take_slot(weivel_handles *handles, uint32_t *slot) {
     }
     *slot = handles->count++;
     handles->slots[*slot].generation = 1;
+    handles->slots[*slot].ended_generation = 0;
+    handles->slots[*slot].ending = 0;
     return true;
 }
 
@@ -123,11 +129,31 @@ weivel_status weivel_handles_resolve(const weivel_handles *handles, weivel_handl
     return entry == NULL ? WEIVEL_STATUS_REFUSED : WEIVEL_STATUS_OK;
 }
 
+bool weivel_handles_live_as(const weivel_handles *handles, weivel_handle handle, uint32_t kind) {
+    return live_slot(handles, handle, kind) != NULL;
+}
+
+uint32_t weivel_handles_ending(const weivel_handles *handles, weivel_handle handle) {
+    uint32_t slot = slot_of(handle);
+    if (handle == 0 || slot >= handles->count) {
+        return 0;
+    }
+    const handle_slot *entry = &handles->slots[slot];
+    return entry->ended_generation == generation_of(handle) ? entry->ending : 0;
+}
+
 weivel_status weivel_handles_release(weivel_handles *handles, weivel_handle handle, uint32_t kind) {
+    return weivel_handles_release_ending(handles, handle, kind, 0);
+}
+
+weivel_status weivel_handles_release_ending(weivel_handles *handles, weivel_handle handle, uint32_t kind,
+                                            uint32_t ending) {
     handle_slot *entry = live_slot(handles, handle, kind);
     if (entry == NULL) {
         return WEIVEL_STATUS_REFUSED;
     }
+    entry->ended_generation = entry->generation;
+    entry->ending = ending;
     entry->occupied = false;
     entry->record = NULL;
     handles->live--;

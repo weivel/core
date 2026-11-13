@@ -436,6 +436,11 @@ weivel_status weivel_manifest_copy(const weivel_manifest *callers, weivel_owned_
     return WEIVEL_STATUS_OK;
 }
 
+const char *weivel_manifest_named(const weivel_manifest *callers) {
+    const char *name = callers->import_name;
+    return name != NULL && name[0] != '\0' ? name : NULL;
+}
+
 void weivel_manifest_free(weivel_owned_manifest *owned) {
     free(owned->storage);
     memset(owned, 0, sizeof *owned);

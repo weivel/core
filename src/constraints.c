@@ -224,11 +224,11 @@ static bool is_last_poll(const weivel_constrained *constrained) {
     return constrained->bounded && constrained->poll_index >= constrained->last_poll;
 }
 
-/** The value `name` has among kept numbers, or NULL. */
-static const weivel_number *kept_named(const weivel_kept_numbers *numbers, const char *name) {
-    for (uint32_t index = 0; index < numbers->count; index++) {
-        if (strcmp(numbers->items[index].name, name) == 0) {
-            return &numbers->items[index];
+/** The value `name` has among `count` numbers at today's size, or NULL. */
+static const weivel_number *named(const weivel_number *items, uint32_t count, const char *name) {
+    for (uint32_t index = 0; index < count; index++) {
+        if (strcmp(items[index].name, name) == 0) {
+            return &items[index];
         }
     }
     return NULL;
@@ -264,7 +264,7 @@ static bool overlay(const weivel_numbers *advertised, const weivel_numbers *live
     for (uint32_t index = 0; index < live->count; index++) {
         weivel_number number;
         weivel_element_read(live->items, live->count, index, &number, sizeof number);
-        weivel_number *existing = (weivel_number *)kept_named(&merged, number.name);
+        weivel_number *existing = (weivel_number *)named(merged.items, merged.count, number.name);
         if (existing != NULL) {
             existing->value = number.value;
             continue;
@@ -279,26 +279,29 @@ static bool overlay(const weivel_numbers *advertised, const weivel_numbers *live
 }
 
 /**
- * Whether `seen` meets every constraint.
+ * The name of the first constraint `offered`, `count` numbers at today's size, does not meet, or NULL when it meets
+ * every one.
  * @implNote A constraint the vocabulary does not name is NOT met: reading it as met would let a typo in a manifest
  * read as a requirement nothing has to meet.
  */
-static bool satisfies(const weivel_vocabulary *vocabulary, const weivel_numbers *constraints,
-                      const weivel_kept_numbers *seen) {
+static const char *first_unmet(const weivel_vocabulary *vocabulary, const weivel_numbers *constraints,
+                               const weivel_number *offered, uint32_t count) {
     for (uint32_t index = 0; index < constraints->count; index++) {
         const weivel_number *constraint = &constraints->items[index];
         const weivel_constraint_entry *entry = weivel_table_find_text(vocabulary->by_name, constraint->name);
-        const weivel_number *offered = entry == NULL ? NULL : kept_named(seen, entry->attribute_name);
-        if (offered == NULL) {
-            return false;
-        }
-        bool met = entry->bound == WEIVEL_BOUND_UPPER ? offered->value <= constraint->value
-                                                       : offered->value >= constraint->value;
+        const weivel_number *attribute = entry == NULL ? NULL : named(offered, count, entry->attribute_name);
+        bool met = attribute != NULL && (entry->bound == WEIVEL_BOUND_UPPER ? attribute->value <= constraint->value
+                                                                             : attribute->value >= constraint->value);
         if (!met) {
-            return false;
+            return constraint->name;
         }
     }
-    return true;
+    return NULL;
+}
+
+static bool satisfies(const weivel_vocabulary *vocabulary, const weivel_numbers *constraints,
+                      const weivel_kept_numbers *seen) {
+    return first_unmet(vocabulary, constraints, seen->items, seen->count) == NULL;
 }
 
 static void log_unknown(weivel_core *core, const weivel_want *want) {
@@ -365,10 +368,22 @@ static weivel_status ask(weivel_core *core, weivel_want *want, weivel_registrati
     constrained->unasked = status != WEIVEL_STATUS_OK;
     if (constrained->unasked) {
         constrained->request = 0;
+    }
+    return status;
+}
+
+/** Logs a question a want that goes on waiting could not put; the want's start logs none, since it is discarded. */
+static void log_unasked(weivel_core *core, weivel_status status) {
+    if (status != WEIVEL_STATUS_OK) {
         weivel_core_log(core, WEIVEL_LOG_ERROR,
                         "memory ran out asking a provider for a want, so the question was never put");
     }
-    return status;
+}
+
+/** Asks as `ask` does, for a want past its start, which goes on waiting whether or not the question was put. */
+static void ask_later(weivel_core *core, weivel_want *want, weivel_registration *registration, uint32_t phase,
+                      int64_t closes) {
+    log_unasked(core, ask(core, want, registration, phase, closes));
 }
 
 static void describe_offered(weivel_text *text, const weivel_constrained *constrained,
@@ -378,6 +393,26 @@ static void describe_offered(weivel_text *text, const weivel_constrained *constr
     } else {
         describe_numbers(text, registration->advertised);
     }
+}
+
+/**
+ * The constraint an unmet or degraded want names: the first that what the provider last offered, as
+ * describe_offered describes it, does not meet, else the first, when nothing provides the service or the offer
+ * meets them all.
+ */
+static const char *missed_constraint(const weivel_core *core, const weivel_want *want,
+                                     const weivel_registration *registration) {
+    const weivel_constrained *constrained = want->constrained;
+    const weivel_numbers *constraints = &constrained->wanted->constraints;
+    const char *missed = NULL;
+    if (registration != NULL && constrained->answered) {
+        missed = first_unmet(&core->vocabulary, constraints, constrained->seen.items, constrained->seen.count);
+    } else if (registration != NULL) {
+        const weivel_numbers *advertised = registration->advertised;
+        missed = first_unmet(&core->vocabulary, constraints, advertised == NULL ? NULL : advertised->items,
+                             advertised == NULL ? 0 : advertised->count);
+    }
+    return missed != NULL ? missed : constraints->items[0].name;
 }
 
 static void reject_unmet(weivel_core *core, weivel_want *want, const weivel_registration *registration) {
@@ -397,7 +432,8 @@ static void reject_unmet(weivel_core *core, weivel_want *want, const weivel_regi
     append(&fix, "run a provider that meets ");
     describe_numbers(&fix, constraints);
     append(&fix, ", or mark the requirement degradable to accept what there is");
-    weivel_waiting_reject(core, want, WEIVEL_REFUSAL_UNMET_CONSTRAINT, text_of(&detail), text_of(&fix));
+    weivel_waiting_reject(core, want, WEIVEL_REFUSAL_UNMET_CONSTRAINT, missed_constraint(core, want, registration),
+                          text_of(&detail), text_of(&fix));
     free(detail.data);
     free(fix.data);
 }
@@ -405,7 +441,7 @@ static void reject_unmet(weivel_core *core, weivel_want *want, const weivel_regi
 static void reject_not_served(weivel_core *core, weivel_want *want) {
     weivel_text detail = {NULL, 0, 0, false};
     append(&detail, "needs \"%s\", and its provider would not serve even an unconstrained ask", want->slot->id);
-    weivel_waiting_reject(core, want, WEIVEL_REFUSAL_NOT_SERVED, text_of(&detail),
+    weivel_waiting_reject(core, want, WEIVEL_REFUSAL_NOT_SERVED, want->slot->id, text_of(&detail),
                           "have the provider serve an unconstrained ask, or stop declaring the requirement degradable");
     free(detail.data);
 }
@@ -422,7 +458,7 @@ static void spend_budget(weivel_core *core, weivel_want *want, int64_t now) {
         reject_unmet(core, want, registration);
         return;
     }
-    ask(core, want, registration, PHASE_DEGRADE_CONSTRAINED, add_saturated(now, want->constrained->poll));
+    ask_later(core, want, registration, PHASE_DEGRADE_CONSTRAINED, add_saturated(now, want->constrained->poll));
 }
 
 static weivel_status begin_poll(weivel_core *core, weivel_want *want, int64_t index) {
@@ -464,10 +500,12 @@ static weivel_status serve(weivel_core *core, weivel_want *want, weivel_registra
                         "memory ran out holding a service for a want, so its question stays open");
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
+    const char *degraded_on = NULL;
     if (degraded) {
         degraded_report(core, want, registration);
+        degraded_on = missed_constraint(core, want, registration);
     }
-    weivel_waiting_settle(core, want, registration, degraded);
+    weivel_waiting_settle(core, want, registration, degraded_on);
     return WEIVEL_STATUS_OK;
 }
 
@@ -510,7 +548,7 @@ void weivel_constraints_due(weivel_core *core, weivel_want *want, int64_t now) {
         if (again == NULL) {
             reject_unmet(core, want, NULL);
         } else {
-            ask(core, want, again, constrained->phase, add_saturated(now, constrained->poll));
+            ask_later(core, want, again, constrained->phase, add_saturated(now, constrained->poll));
         }
         return;
     }
@@ -519,7 +557,7 @@ void weivel_constraints_due(weivel_core *core, weivel_want *want, int64_t now) {
         if (registration == NULL) {
             reject_unmet(core, want, NULL);
         } else {
-            ask(core, want, registration, PHASE_DEGRADE_UNCONSTRAINED, add_saturated(now, constrained->poll));
+            ask_later(core, want, registration, PHASE_DEGRADE_UNCONSTRAINED, add_saturated(now, constrained->poll));
         }
         return;
     }
@@ -539,7 +577,7 @@ void weivel_constraints_due(weivel_core *core, weivel_want *want, int64_t now) {
         spend_budget(core, want, now);
         return;
     }
-    begin_poll(core, want, next);
+    log_unasked(core, begin_poll(core, want, next));
 }
 
 /** Whether a report answers the want's open question for the registration still under its id. */
@@ -564,7 +602,7 @@ static weivel_status answer_attributes(weivel_core *core, weivel_want *want, wei
     constrained->seen = seen;
     constrained->answered = true;
     if (satisfies(&core->vocabulary, &constrained->wanted->constraints, &constrained->seen)) {
-        ask(core, want, registration, PHASE_SERVE, constrained->closes);
+        ask_later(core, want, registration, PHASE_SERVE, constrained->closes);
     } else {
         poll_failed(core, want, now);
     }
@@ -589,7 +627,7 @@ weivel_status weivel_constraints_report(weivel_core *core, weivel_want *want, we
     if (phase == PHASE_SERVE) {
         poll_failed(core, want, now);
     } else if (phase == PHASE_DEGRADE_CONSTRAINED) {
-        ask(core, want, current, PHASE_DEGRADE_UNCONSTRAINED, add_saturated(now, constrained->poll));
+        ask_later(core, want, current, PHASE_DEGRADE_UNCONSTRAINED, add_saturated(now, constrained->poll));
     } else {
         reject_not_served(core, want);
     }

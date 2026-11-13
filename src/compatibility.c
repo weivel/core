@@ -57,18 +57,20 @@ static bool application_refuses(const weivel_host *host, const weivel_manifest *
            !hosts_any_target(host, &manifest->targets);
 }
 
-static weivel_status refuse(weivel_support *answer, uint32_t axis, const char *detail, const char *fix) {
+static weivel_status refuse(weivel_support *answer, const weivel_manifest *manifest, uint32_t axis,
+                            const char *detail, const char *fix) {
     weivel_status status = WEIVEL_STATUS_OUT_OF_MEMORY;
     if (detail != NULL && fix != NULL) {
-        const char *texts[2] = {detail, fix};
-        const char *copies[2];
-        answer->storage = weivel_events_copy_texts(2, texts, copies);
+        const char *copies[3];
+        answer->storage = weivel_events_copy_refusal(manifest->import_name, detail, fix, copies);
         if (answer->storage != NULL) {
             answer->supported = 0;
             answer->axis = axis;
             answer->refusal.code = WEIVEL_REFUSAL_INCOMPATIBLE;
-            answer->refusal.detail = copies[0];
-            answer->refusal.fix = copies[1];
+            answer->refusal.detail = copies[1];
+            answer->refusal.fix = copies[2];
+            answer->subject = copies[0];
+            answer->has_fix = weivel_events_has_fix(fix);
             status = WEIVEL_STATUS_OK;
         }
     }
@@ -85,7 +87,7 @@ static weivel_status refuse_application(const weivel_host *host, const weivel_ma
     }
     char *fix = with_texts("install it in %s, or add \"%s\" to \"targets\" in its manifest",
                            manifest->targets.items[0], host->applications.items[0]);
-    weivel_status status = refuse(answer, WEIVEL_AXIS_APPLICATION, detail, fix);
+    weivel_status status = refuse(answer, manifest, WEIVEL_AXIS_APPLICATION, detail, fix);
     free(targets);
     free(applications);
     free(detail);
@@ -98,7 +100,7 @@ static weivel_status refuse_api(const weivel_host *host, const weivel_manifest *
     char fix[96];
     snprintf(detail, sizeof detail, "needs api %u, this host has api %u", (unsigned)manifest->api, (unsigned)host->api);
     snprintf(fix, sizeof fix, "update the app to a version that implements api %u or later", (unsigned)manifest->api);
-    return refuse(answer, WEIVEL_AXIS_API, detail, fix);
+    return refuse(answer, manifest, WEIVEL_AXIS_API, detail, fix);
 }
 
 weivel_status weivel_compatibility_decide(const weivel_host *host, const weivel_manifest *manifest,

@@ -41,11 +41,21 @@ void weivel_events_drop_newest(weivel_events *events);
 void *weivel_events_copy_texts(size_t count, const char *const *texts, const char **copies);
 
 /**
+ * Copies a refusal's subject, detail and fix, in that order, as weivel_events_copy_texts does, except that a NULL
+ * subject stays NULL.
+ */
+void *weivel_events_copy_refusal(const char *subject, const char *detail, const char *fix, const char **copies);
+
+/** A refusal's `has_fix`: 1 when `fix` is non-empty, else 0. */
+uint32_t weivel_events_has_fix(const char *fix);
+
+/**
  * Queues an event nothing reserved, in room no reservation needs; each answers WEIVEL_STATUS_OUT_OF_MEMORY, with
  * nothing queued, when memory runs out.
  */
 weivel_status weivel_events_push_log(weivel_events *events, uint32_t level, const char *text);
-weivel_status weivel_events_push_refusal(weivel_events *events, uint32_t code, const char *detail, const char *fix);
+weivel_status weivel_events_push_refusal(weivel_events *events, uint32_t code, const char *subject, const char *detail,
+                                         const char *fix);
 
 /** Queues a capacity question, copying `constraints`, which may be NULL for none, into the event's storage. */
 weivel_status weivel_events_push_capacity(weivel_events *events, const weivel_capacity_event *asked,
@@ -57,11 +67,12 @@ weivel_status weivel_events_push_reach(weivel_events *events, uint32_t kind, wei
 
 /**
  * Delivers an event a reservation was made for, consuming it; none can fail. A want's settlement carries its
- * service when `implementation` is not 0, else the refusal given, whose texts become a fixed sentence when memory
- * runs out copying them, so the event itself is never lost.
+ * service when `implementation` is not 0, else the refusal given, whose texts become a fixed sentence and whose
+ * subject is lost when memory runs out copying them, so the event itself is never lost. `subject` is the rejection's,
+ * or a degraded settlement's constraint, NULL otherwise.
  */
-void weivel_events_deliver_want(weivel_events *events, const weivel_want_event *settled, const char *detail,
-                                const char *fix);
+void weivel_events_deliver_want(weivel_events *events, const weivel_want_event *settled, const char *subject,
+                                const char *detail, const char *fix);
 void weivel_events_deliver_watch(weivel_events *events, const weivel_watch_event *heard);
 void weivel_events_deliver_revoked(weivel_events *events, const weivel_revoked_event *revoked);
 void weivel_events_deliver_capability(weivel_events *events, const weivel_capability_event *heard);

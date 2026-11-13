@@ -10,7 +10,7 @@
 #include "sized.h"
 
 weivel_status weivel_core_refuse_malformed(weivel_core *core, const char *detail, const char *fix) {
-    weivel_status status = weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_MALFORMED_CALL, detail, fix);
+    weivel_status status = weivel_events_push_refusal(core->events, WEIVEL_REFUSAL_MALFORMED_CALL, NULL, detail, fix);
     return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_MALFORMED : status;
 }
 

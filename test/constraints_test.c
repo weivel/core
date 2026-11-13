@@ -177,6 +177,9 @@ typedef struct resolve_outcome {
     char report[512];
     char detail[512];
     char fix[512];
+    char about[128];
+    uint32_t named;
+    uint32_t has_fix;
 } resolve_outcome;
 
 /** The attributes a scripted provider reports at its latest read, clamped at the script's last entry. */
@@ -229,6 +232,9 @@ static void react(weivel_core *core, scripted *provider, weivel_handle want, int
             outcome->code = item.code;
             copy_text(outcome->detail, sizeof outcome->detail, item.detail);
             copy_text(outcome->fix, sizeof outcome->fix, item.fix);
+            copy_text(outcome->about, sizeof outcome->about, item.about);
+            outcome->named = item.named;
+            outcome->has_fix = item.has_fix;
         }
     }
 }
@@ -322,6 +328,9 @@ static void degrades_when_never_satisfied_and_degradable(void) {
     CHECK(outcome.code == WEIVEL_REFUSAL_NONE);
     CHECK(outcome.settled_at == 2000);
     CHECK(given.provider.reads == 3);
+    CHECK(outcome.named == 1);
+    check_text(outcome.about, "minReplicas", "degraded subject");
+    CHECK(outcome.has_fix == 0);
 }
 
 static void refuses_when_never_satisfied_and_not_degradable(void) {
@@ -345,6 +354,25 @@ static void refuses_when_never_satisfied_and_not_degradable(void) {
                "run a provider that meets minReplicas 3, or mark the requirement degradable to accept what there is",
                "unmet fix");
     CHECK(outcome.settled_at == 2000);
+    CHECK(outcome.named == 1);
+    check_text(outcome.about, "minReplicas", "unmet subject");
+    CHECK(outcome.has_fix == 1);
+}
+
+static void the_subject_is_the_first_constraint_the_offer_misses(void) {
+    for (int degradable = 0; degradable < 2; degradable++) {
+        resolve_given given = {{{"minReplicas", "maxLatencyMs"}, {3, 50}},
+                               degradable != 0,
+                               {.advertised = {{"maxReplicas", "latencyMs"}, {5, 90}},
+                                .by_poll = {{{"latencyMs"}, {80}}}},
+                               2000,
+                               1000};
+        resolve_outcome outcome = resolve(&given);
+        CHECK(outcome.degraded == (degradable != 0));
+        CHECK(outcome.code == (uint32_t)(degradable != 0 ? WEIVEL_REFUSAL_NONE : WEIVEL_REFUSAL_UNMET_CONSTRAINT));
+        CHECK(outcome.named == 1);
+        check_text(outcome.about, "maxLatencyMs", "first missed constraint");
+    }
 }
 
 static void serves_when_attributes_satisfy_before_the_deadline(void) {
@@ -1142,6 +1170,7 @@ int main(void) {
     asks_with_the_consumers_constraints_before_falling_back();
     degrades_when_never_satisfied_and_degradable();
     refuses_when_never_satisfied_and_not_degradable();
+    the_subject_is_the_first_constraint_the_offer_misses();
     serves_when_attributes_satisfy_before_the_deadline();
     every_poll_asks_for_the_attributes_afresh();
     a_poll_left_unanswered_is_not_right_now();

@@ -16,6 +16,8 @@ weivel_test(manifest_test weivel_core)
 weivel_test(compatibility_test weivel_core_shared)
 weivel_test(activation_test weivel_core_shared)
 weivel_test(registry_test weivel_core_shared)
+weivel_test(subject_test weivel_core_shared)
+weivel_test(handle_state_test weivel_core_shared)
 weivel_test(reach_test weivel_core_testing)
 weivel_test(lifecycle_test weivel_core_testing)
 weivel_test(constraints_test weivel_core_testing)
@@ -23,6 +25,14 @@ weivel_test(capabilities_test weivel_core_testing)
 weivel_test(ledger_test weivel_core_testing)
 weivel_test(threads_test weivel_core_testing)
 weivel_test(oom_test weivel_core_testing)
+
+add_library(echo SHARED echo/echo.c)
+target_compile_definitions(echo PRIVATE ECHO_BUILDING)
+weivel_strict_warnings(echo)
+set_target_properties(echo PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/shared)
+weivel_test(echo_test echo)
 
 add_test(NAME public_headers_are_ascii
     COMMAND ${CMAKE_COMMAND} -DDIRECTORY=${PROJECT_SOURCE_DIR}/include -P ${CMAKE_CURRENT_SOURCE_DIR}/ascii_check.cmake)

@@ -57,6 +57,7 @@ static weivel_status add_id(weivel_ids *ids, const char *id) {
 void weivel_kept_refusal_clear(weivel_kept_refusal *refusal) {
     free(refusal->detail);
     free(refusal->fix);
+    free(refusal->subject);
     memset(refusal, 0, sizeof *refusal);
 }
 
@@ -73,17 +74,21 @@ static char *copy_text(const char *text) {
     return copy;
 }
 
-bool weivel_kept_refusal_copy(weivel_kept_refusal *kept, uint32_t code, const char *detail, const char *fix) {
+bool weivel_kept_refusal_copy(weivel_kept_refusal *kept, uint32_t code, const char *subject, const char *detail,
+                              const char *fix) {
     char *detail_copy = copy_text(detail);
     char *fix_copy = copy_text(fix);
-    if (detail_copy == NULL || fix_copy == NULL) {
+    char *subject_copy = subject == NULL ? NULL : copy_text(subject);
+    if (detail_copy == NULL || fix_copy == NULL || (subject != NULL && subject_copy == NULL)) {
         free(detail_copy);
         free(fix_copy);
+        free(subject_copy);
         return false;
     }
     kept->code = code;
     kept->detail = detail_copy;
     kept->fix = fix_copy;
+    kept->subject = subject_copy;
     return true;
 }
 
@@ -210,17 +215,21 @@ static uint32_t status_of(const weivel_plugin *plugin) {
     }
 }
 
-static void put_refusal(weivel_layout *layout, const weivel_plugin *plugin, weivel_refusal *refusal) {
-    memset(refusal, 0, sizeof *refusal);
+static void put_refusal(weivel_layout *layout, const weivel_plugin *plugin, weivel_ledger_row *row) {
+    memset(&row->refusal, 0, sizeof row->refusal);
+    row->subject = NULL;
+    row->has_fix = 0;
     const weivel_kept_refusal *kept = weivel_kept_refusal_held(&plugin->quarantine_reason)
                                           ? &plugin->quarantine_reason
                                           : &plugin->activation_refusal;
     if (plugin->state != WEIVEL_PLUGIN_QUARANTINED || !weivel_kept_refusal_held(kept)) {
         return;
     }
-    refusal->code = kept->code;
-    refusal->detail = put_text(layout, kept->detail);
-    refusal->fix = put_text(layout, kept->fix);
+    row->refusal.code = kept->code;
+    row->refusal.detail = put_text(layout, kept->detail);
+    row->refusal.fix = put_text(layout, kept->fix);
+    row->subject = kept->subject == NULL ? NULL : put_text(layout, kept->subject);
+    row->has_fix = weivel_events_has_fix(kept->fix);
 }
 
 static void put_row(weivel_layout *layout, const weivel_plugin *plugin, weivel_ledger_row *row) {
@@ -232,7 +241,7 @@ static void put_row(weivel_layout *layout, const weivel_plugin *plugin, weivel_l
     row->identity = put_text(layout, plugin->identity);
     row->status = status_of(plugin);
     row->verified = plugin->verified ? 1u : 0u;
-    put_refusal(layout, plugin, &row->refusal);
+    put_refusal(layout, plugin, row);
     row->capabilities_declared =
         put_strings(layout, manifest->capabilities.provides.items, manifest->capabilities.provides.count);
     row->permissions = put_strings(layout, manifest->permissions.items, manifest->permissions.count);
@@ -337,6 +346,8 @@ static void put_snapshot(weivel_layout *layout, const weivel_core *core, const w
             refusals[at].plugin = record->plugin;
             refusals[at].id = id;
             refusals[at].code = record->code;
+            refusals[at].subject = id;
+            refusals[at].has_fix = 1;
         }
     }
     snapshot->rows = row_count == 0 ? NULL : rows;
