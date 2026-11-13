@@ -24,9 +24,10 @@
  *   the moment the obligation arises: a want's settlement when the want is made, a holding's revocation when the
  *   holding is recorded, and a watch's notification before the change that causes it. A call that cannot reserve
  *   everything it will owe answers WEIVEL_STATUS_OUT_OF_MEMORY and changes nothing, and a reserved event is always
- *   delivered, so no want settles unheard and no holder misses a revocation. A log is the one event the core may
- *   drop when memory runs out; a rejected want whose refusal texts cannot be copied carries a fixed sentence in
- *   their place, its code always exact.
+ *   delivered, so no want settles unheard and no holder misses a revocation. The core always owes its caller its
+ *   current deadline, so that announcement's room is reserved when the core is created and is never given back. A
+ *   log is the one event the core may drop when memory runs out; a rejected want whose refusal texts cannot be
+ *   copied carries a fixed sentence in their place, its code always exact.
  * - Answers. An answer the core fills into a caller's struct is size-prefixed and freed by its own release call.
  *   Its arrays are of one of two kinds, and every answer says which. An element that may grow begins with its own
  *   `uint32_t size`, the core's, and the caller steps through the array by the first element's `size`, never by
@@ -37,8 +38,8 @@
  * - Strings. Strings handed in are copied before the call returns. Strings handed out are UTF-8, NUL-terminated,
  *   and belong to the struct that carries them until its release call.
  * - Time. The core owns no clock. Every timestamp is a caller-supplied int64_t count of milliseconds on a
- *   monotonic scale the caller chooses. The core answers its next deadline and acts on time only in
- *   weivel_advance.
+ *   monotonic scale the caller chooses. The core answers its next deadline, announces every change to it as a
+ *   WEIVEL_EVENT_DEADLINE, and acts on time only in weivel_advance.
  * - Threads. Every call taking a core may be made from any thread; one lock inside the core serialises them and
  *   is never held while anything outside the core runs. One thread drains the queue: events come out in the order
  *   they happened, and two threads draining at once would split that order between them.
@@ -229,7 +230,17 @@ typedef enum weivel_event_kind {
      */
     WEIVEL_EVENT_CAPACITY_WANTED = 7,
     /** A watched capability gained or lost a verified implementation; the payload is `data.capability`. */
-    WEIVEL_EVENT_CAPABILITY = 8
+    WEIVEL_EVENT_CAPABILITY = 8,
+    /**
+     * The core's earliest deadline changed: one was set where none was, it moved earlier or later, or the last one
+     * went. The payload is `data.deadline`, the deadline weivel_next_deadline answers from then on, so a caller arms
+     * and disarms its timer from the queue alone and never keeps its own list of the calls that move a deadline.
+     * Each call that leaves the earliest deadline where it found it queues none, however much it moved meanwhile, and
+     * a change comes after every other event the same call queued. At most one waits: a newer one takes out any not
+     * yet drained and is queued last, so what is drained is always the current deadline. Its room in the queue is
+     * kept from the core's creation on, so it never needs memory and no call fails for want of it.
+     */
+    WEIVEL_EVENT_DEADLINE = 9
 } weivel_event_kind;
 
 /**
@@ -381,6 +392,15 @@ typedef struct weivel_capability_event {
 } weivel_capability_event;
 
 /**
+ * The earliest deadline a WEIVEL_EVENT_DEADLINE announces: `set` is 1 with `at` the deadline in the caller's
+ * milliseconds, or 0 with `at` 0 when nothing waits on time any more, so no timer is needed.
+ */
+typedef struct weivel_deadline_event {
+    int64_t at;
+    uint32_t set;
+} weivel_deadline_event;
+
+/**
  * How many 64-bit words an event's payload union spans. Part of the event's first published shape, so it never
  * shrinks; a payload that outgrows it enlarges the union and so `sizeof(weivel_event)`, which the size convention
  * absorbs.
@@ -407,6 +427,7 @@ typedef struct weivel_event {
         weivel_capacity_event capacity;
         weivel_capability_event capability;
         weivel_refusal_event refused;
+        weivel_deadline_event deadline;
         uint64_t reserved[WEIVEL_EVENT_PAYLOAD_WORDS];
     } data;
 } weivel_event;
@@ -616,7 +637,9 @@ WEIVEL_API weivel_status weivel_next_event(weivel_core *core, weivel_event *even
 WEIVEL_API weivel_status weivel_event_release(weivel_event *event);
 
 /**
- * Answers the earliest deadline the core is waiting on, so the caller can arm its own timer for it.
+ * Answers the earliest deadline the core is waiting on, so the caller can arm its own timer for it. It is the very
+ * deadline the last WEIVEL_EVENT_DEADLINE announced, read without draining the queue; a caller arming from those
+ * events needs it only to look.
  *
  * @param deadline receives the deadline in the caller's milliseconds when one is set. Required.
  * @param pending_events receives how many events wait; may be NULL.

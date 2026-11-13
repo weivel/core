@@ -29,6 +29,8 @@ typedef struct seen {
     char about[128];
     uint32_t named;
     uint32_t has_fix;
+    int64_t deadline;
+    uint32_t deadline_set;
 } seen;
 
 #define JOURNAL_CAPACITY 256
@@ -110,6 +112,10 @@ static inline void note(seen *item, const weivel_event *event) {
         copy_text(item->id, sizeof item->id, event->data.reach.id);
         note_refusal(item, &event->data.reach.refusal);
         note_subject(item, event->data.reach.subject, event->data.reach.has_fix);
+        break;
+    case WEIVEL_EVENT_DEADLINE:
+        item->deadline = event->data.deadline.at;
+        item->deadline_set = event->data.deadline.set;
         break;
     default:
         break;

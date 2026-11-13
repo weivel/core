@@ -13,6 +13,8 @@ struct weivel_events {
     uint32_t count;
     /** Events owed and not yet delivered; `capacity` always covers `count` plus these. */
     uint32_t reserved;
+    /** Whether a deadline announcement waits in the ring; while none does, `capacity` also keeps room for one. */
+    bool deadline_waiting;
 };
 
 weivel_events *weivel_events_create(uint32_t initial_capacity) {
@@ -45,6 +47,11 @@ uint32_t weivel_events_pending(const weivel_events *events) {
     return events->count;
 }
 
+/** The room spoken for: every event queued, every reservation, and the deadline announcement's when none waits. */
+static uint64_t spoken_for(const weivel_events *events) {
+    return (uint64_t)events->count + events->reserved + (events->deadline_waiting ? 0u : 1u);
+}
+
 /** Grows the ring by doubling until it holds `needed` events; false, with nothing changed, when it cannot. */
 static bool grow_to(weivel_events *events, uint64_t needed) {
     uint64_t capacity = events->capacity;
@@ -72,7 +79,7 @@ static bool grow_to(weivel_events *events, uint64_t needed) {
 }
 
 weivel_status weivel_events_reserve(weivel_events *events, uint32_t count) {
-    if (!grow_to(events, (uint64_t)events->count + events->reserved + count)) {
+    if (!grow_to(events, spoken_for(events) + count)) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
     events->reserved += count;
@@ -96,7 +103,7 @@ static void place(weivel_events *events, const weivel_event *event) {
 
 /** Queues an unreserved event, taking its `storage`; on failure the storage is freed, so the caller never frees it. */
 static weivel_status push(weivel_events *events, const weivel_event *event) {
-    if (!grow_to(events, (uint64_t)events->count + events->reserved + 1)) {
+    if (!grow_to(events, spoken_for(events) + 1)) {
         free(event->storage);
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
@@ -112,6 +119,9 @@ static void deliver(weivel_events *events, const weivel_event *event) {
 void weivel_events_drop_newest(weivel_events *events) {
     events->count--;
     weivel_event *newest = &events->ring[(events->first + events->count) % events->capacity];
+    if (newest->kind == WEIVEL_EVENT_DEADLINE) {
+        events->deadline_waiting = false;
+    }
     free(newest->storage);
     memset(newest, 0, sizeof *newest);
 }
@@ -123,7 +133,27 @@ bool weivel_events_pop(weivel_events *events, weivel_event *event) {
     *event = events->ring[events->first];
     events->first = (events->first + 1) % events->capacity;
     events->count--;
+    if (event->kind == WEIVEL_EVENT_DEADLINE) {
+        events->deadline_waiting = false;
+    }
     return true;
+}
+
+static weivel_event *at_position(weivel_events *events, uint32_t position) {
+    return &events->ring[(events->first + position) % events->capacity];
+}
+
+/** Takes the waiting deadline announcement out of the ring, closing the gap, so its room is free again. */
+static void take_out_waiting_deadline(weivel_events *events) {
+    uint32_t position = 0;
+    while (at_position(events, position)->kind != WEIVEL_EVENT_DEADLINE) {
+        position++;
+    }
+    for (; position + 1 < events->count; position++) {
+        *at_position(events, position) = *at_position(events, position + 1);
+    }
+    events->count--;
+    events->deadline_waiting = false;
 }
 
 void *weivel_events_copy_texts(size_t count, const char *const *texts, const char **copies) {
@@ -303,6 +333,19 @@ weivel_status weivel_events_push_capacity(weivel_events *events, const weivel_ca
         event.data.capacity.constraints.count = constraints->count;
     }
     return push(events, &event);
+}
+
+_Static_assert(sizeof(weivel_deadline_event) <= WEIVEL_EVENT_PAYLOAD_WORDS * sizeof(uint64_t),
+               "a deadline event must fit the event's payload union");
+
+void weivel_events_announce_deadline(weivel_events *events, const weivel_deadline_event *deadline) {
+    if (events->deadline_waiting) {
+        take_out_waiting_deadline(events);
+    }
+    weivel_event event = empty_event(WEIVEL_EVENT_DEADLINE);
+    event.data.deadline = *deadline;
+    place(events, &event);
+    events->deadline_waiting = true;
 }
 
 _Static_assert(sizeof(weivel_reach_refusal) <= WEIVEL_EVENT_PAYLOAD_WORDS * sizeof(uint64_t),

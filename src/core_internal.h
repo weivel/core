@@ -38,6 +38,8 @@ struct weivel_core {
     uint32_t notices;
     /** Logs that memory could not hold: a log is the one event the core may drop. */
     uint64_t dropped_logs;
+    /** The earliest deadline last announced, drained or not; zeroed, it is none, as at creation. */
+    weivel_deadline_event announced;
 };
 
 /** The kind of record each handle names. */
@@ -74,7 +76,8 @@ void weivel_core_log(weivel_core *core, uint32_t level, const char *text);
 weivel_status weivel_core_refuse_malformed(weivel_core *core, const char *detail, const char *fix);
 
 /**
- * Ends a public call: gives back whatever the call reserved and did not use, then writes how many events wait into
+ * Ends a public call: gives back whatever the call reserved and did not use, announces the earliest deadline when the
+ * call changed it, then writes how many events wait into
  * `pending_events` when it is given. Every public call taking a core ends here, with the core's mutex held.
  */
 void weivel_core_end_call(weivel_core *core, uint32_t *pending_events);

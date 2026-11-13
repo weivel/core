@@ -40,8 +40,9 @@ that cannot reserve what it will owe answers out of memory and changes nothing, 
 and a holder never misses a revocation. A log is the one event the core may drop when memory runs out.
 
 Time is the caller's. Every timestamp is a count of milliseconds on a monotonic scale the caller chooses. The core
-answers its next deadline; the caller arms its own timer for it and tells the core the time when the timer fires.
-With no deadline there is no timer, so a wait without a deadline waits for as long as it takes.
+announces every change to its next deadline as an event, at most one waiting at a time, in room kept for it from the
+core's creation; the caller arms its own timer from that event alone and tells the core the time when the timer
+fires. With no deadline there is no timer, so a wait without a deadline waits for as long as it takes.
 
 ## Sizes
 

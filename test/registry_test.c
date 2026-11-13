@@ -301,7 +301,8 @@ static void releasing_a_plugin_takes_everything_in_one_call(void) {
     CHECK(heard_by(other_watch, WEIVEL_CHANGE_UNREGISTERED) == 1);
     CHECK(settlement_of(want) != NULL && settlement_of(want)->code == WEIVEL_REFUSAL_STOPPED);
     CHECK(revocations_to(leaving, held) == 1);
-    CHECK(the_journal.count == 4);
+    CHECK(count_kind(WEIVEL_EVENT_DEADLINE) == 1 && nth_of(WEIVEL_EVENT_DEADLINE, 0)->deadline_set == 0);
+    CHECK(the_journal.count == 5);
     int64_t deadline;
     CHECK(weivel_next_deadline(core, &deadline, NULL) == WEIVEL_STATUS_NONE);
     CHECK(weivel_unregister(core, watch, NULL) == WEIVEL_STATUS_REFUSED);
@@ -545,11 +546,12 @@ static void deadlines_come_due_in_order_whatever_is_withdrawn(void) {
         CHECK(deadline > previous);
         CHECK(weivel_advance(core, deadline - 1, NULL) == WEIVEL_STATUS_OK);
         drain(core);
-        CHECK(count_kind(WEIVEL_EVENT_WANT_SETTLED) == settled);
+        CHECK(count_kind(WEIVEL_EVENT_WANT_SETTLED) == 0);
         CHECK(weivel_advance(core, deadline, NULL) == WEIVEL_STATUS_OK);
         drain(core);
-        CHECK(count_kind(WEIVEL_EVENT_WANT_SETTLED) == settled + 1);
-        settled = count_kind(WEIVEL_EVENT_WANT_SETTLED);
+        CHECK(count_kind(WEIVEL_EVENT_WANT_SETTLED) == 1);
+        settled += count_kind(WEIVEL_EVENT_WANT_SETTLED);
+        the_journal.count = 0;
         previous = deadline;
         if (settled > WANTS) {
             break;
