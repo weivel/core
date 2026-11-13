@@ -211,8 +211,16 @@ Witnessed by `lifecycle/a-release-deactivates-then-releases-then-forgets`.
 
 1. releases every plugin the host opened and has not released, one whose activate is in flight included, in the
    reverse of the order it opened them, so a consumer is released while what it consumes is still there;
-2. unloads every C library it loaded; an unload that fails is reported to the error sink and the rest still unload;
-3. disarms the timer and destroys the core, whatever the steps before it reported.
+2. dispatches every event those releases queued and runs every deferred step they left to completion, each release's
+   forget included, so no listener, deferred step or core call is left to run once the core is gone;
+3. unloads every C library it loaded; an unload that fails is reported to the error sink and the rest still unload;
+4. disarms the timer and destroys the core, whatever the steps before it reported.
+
+A destroy called inside a dispatch cannot dispatch the events ahead of it, because the dispatcher is never
+re-entered. So it is deferred the same way a release is: the layer puts it on the dispatch queue as a deferred step
+behind every event and deferred step already queued, and it runs, from step 1, once they have run. Running there, it
+is still inside the dispatch, so its steps 3 and 4 wait in turn as a further deferred step behind the events and
+deferred steps its own releases queued, which is how step 2 holds.
 
 Destroy does not free the host object itself. A call made on the host after it is destroyed, a verify among them,
 answers quietly: it answers that the host is destroyed, as a value, and neither throws nor writes to the log or the
