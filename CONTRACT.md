@@ -193,10 +193,13 @@ provided by the host, and its object is answered as any provider's is.
    caller registers, or an outcome the caller reads back). A host whose activation blocked until every activate
    settled would never return while an activate waits on a want nothing provides, and so could never be destroyed.
 
-An outcome is one of four: `active`, `quarantined`, `refused` when the core refused to open the plugin, and `released`
+An outcome is one of five: `active`, `quarantined`, `refused` when the core refused to open the plugin, `released`
 for a plugin released while its activate was in flight, answered when that release begins, so every outcome arrives
-even for an activate that never settles. An open that fails for a reason other than the core's refusal is a defect of
-the layer: it is reported to the error sink, answered as that plugin's `refused` outcome with no refusal, and the
+even for an activate that never settles, and `failed` for a plugin whose open failed for a reason other than the
+core's refusal. Such an open is a defect of the layer: it is reported to the error sink and answered as that plugin's
+`failed` outcome with no refusal. When the open reached the core at all, so that the core holds the plugin open, the
+layer releases and forgets it in the core at once, by the release steps that still apply (its activate was never
+called, so no deactivate is owed), so no plugin stays open in the core until destroy without an outcome. The
 activation goes on to the next plugin, so the caller still receives the plan and every other outcome and no started
 plugin is left running without one.
 
@@ -239,7 +242,8 @@ Witnessed by `lifecycle/a-release-deactivates-then-releases-then-forgets`.
 1. releases every plugin the host opened and has not released, one whose activate is in flight and one quarantined
    included, in the reverse of the order it opened them, so a consumer is released while what it consumes is still
    there. Each release calls the plugin's deactivate when its activate was called, a quarantined plugin's among them.
-   A plugin whose open the core refused was never opened and is never released;
+   A plugin whose open the core refused was never opened and is never released, and one whose open failed was
+   released when it failed, if the core held it open at all;
 2. dispatches every event those releases queued and runs every deferred step they left to completion, each release's
    forget included, so no listener, deferred step or core call is left to run once the core is gone;
 3. unloads every C library it loaded; an unload that fails is reported to the error sink and the rest still unload;
