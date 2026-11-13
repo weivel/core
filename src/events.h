@@ -33,7 +33,8 @@ bool weivel_events_pop(weivel_events *events, weivel_event *event);
 
 /**
  * Frees the newest event other than the deadline announcement, taking back an event queued by a change that is being
- * undone; an announcement waiting after it stays, so an undo can never lose the deadline the caller arms from.
+ * undone; an announcement waiting after it stays, so an undo can never lose the deadline the caller arms from. The
+ * caller must have queued a non-deadline event that is still queued, as the change being undone did.
  */
 void weivel_events_drop_newest(weivel_events *events);
 

@@ -39,9 +39,11 @@ drain driven by a timer would end the process. A sink that itself fails is repor
 output.
 
 **Events are dispatched in the core's order, outside the core, and the dispatcher is never re-entered.** The wrapper
-drains a call's events completely before it dispatches any of them. A call made while an event is dispatched drains
-its own events, and they are dispatched after the event in hand and before the next one already drained, so every
-listener hears changes in the order the core made them.
+drains a call's events completely before it dispatches any of them, and dispatches them first in, first out. A call
+made while an event is dispatched drains its own events too, and they join the end of what is already drained: they
+are dispatched after every event drained before them, never ahead of one, which is the core's "events come out in the
+order they happened". So no listener hears of a handle after a later change has already ended it. The timer is the
+one reader that acts at drain time rather than at dispatch (see `timer`).
 
 ## `core`
 
@@ -54,9 +56,16 @@ Loads the core's binary and owns the one wrapper every call goes through.
   drained, whatever the copy does, so the core never meets an unreleased event. An event the layer cannot copy is
   reported to the error sink and the rest are still drained.
 - A refused call is answered to the caller with the refusal the core queued for it, read from the drained events.
-  `WEIVEL_STATUS_MALFORMED` from a call the layer built is a defect in the layer and is reported as one, never as the
+  Where the core queues none, the layer answers the status alone, with the reason the core's documentation gives
+  for that case: a refusal of reach already reported once for that plugin and id is a repeat and answers
+  `WEIVEL_STATUS_REFUSED` with no new refusal; a registration or watch from a plugin no longer running is a late call
+  and queues only a log; `weivel_handle_state` refuses a handle that names nothing with no event at all. The layer
+  never invents a refusal the core did not give.
+- `WEIVEL_STATUS_MALFORMED` from a call the layer built is a defect in the layer and is reported as one, never as the
   caller's mistake.
-- One thread drains. A language with several threads serialises its drains on one of them.
+- A call and its drain are one step against every other call: the events drained after a call are that call's, and
+  no other thread's call may land between them. A language with several threads either holds one layer lock across
+  the call and its drain, or makes every call on one owning thread that others hand their calls to. One thread drains.
 - It may not keep a list of which calls move a deadline, interpret a handle, or call any core function outside the
   wrapper.
 
@@ -81,8 +90,10 @@ capabilities, watches and wants.
 Arms the core's next deadline on the language's own timer.
 
 - The timer is armed from the latest `WEIVEL_EVENT_DEADLINE` drained, and from nothing else: `set` 1 arms it for
-  `at`, replacing any deadline armed before, and `set` 0 disarms it. Because the core keeps at most one announcement
-  waiting and queues each after every other event of its call, the latest one drained is always the current deadline.
+  `at`, replacing any deadline armed before, and `set` 0 disarms it. It is armed at drain time, as the wrapper drains
+  the event, never later when events are dispatched, because a dispatch can run after a newer announcement has
+  already been drained. Because the core keeps at most one announcement waiting and queues each after every other
+  event of its call, the latest one drained is always the current deadline.
 - When the timer fires it hands the core the time through the wrapper with `weivel_advance(now)`. The events that
   call queues re-arm or disarm it as any others do.
 - A language whose timer cannot wait as long as a deadline lies away waits as long as it can and arms again when that
@@ -99,7 +110,8 @@ Witnessed by `want/a-timed-want-arms-the-timer-at-its-deadline`, `want/a-settled
 ## `context`
 
 What a plugin sees of the core, and the only way it reaches any of it. A context is built for a plugin when the host
-opens it. Once the plugin is released or quarantined its listeners hear nothing more, and a call it still makes
+opens it. Once the plugin is released or quarantined its listeners still hear the events its release or quarantine
+call itself queued, its wants rejected `stopped` among them, and nothing queued after them; a call it still makes
 reaches the core as a late call, which the core answers.
 
 - **Services.** A plugin gets a service registered now, wants one, watches one, lists the ids it may reach that are
@@ -157,7 +169,11 @@ provided by the host, and its object is answered as any provider's is.
 3. as each activate settles, quarantines the plugin when it failed, with a reason saying so and a fix, and otherwise
    verifies it with `weivel_verify_activation`; a verification the core refuses quarantines the plugin in the same
    step, before anything else runs, with no reason of the host's, so its ledger row shows the core's refusal;
-4. answers the plan and every plugin's outcome, active, quarantined or refused, once every activate has settled.
+4. returns once every activate has been started, without blocking on any of them settling; each plugin's outcome,
+   active, quarantined or refused, arrives later, in whatever form the language uses for a result that comes later
+   (a promise, a future, a callback the caller registers, or an outcome the caller reads back). A host whose
+   activation blocked until every activate settled would never return while an activate waits on a want nothing
+   provides, and so could never be destroyed.
 
 Witnessed by `lifecycle/an-awaited-want-does-not-hold-back-a-later-plugin` and
 `consume/a-refused-verify-quarantines-the-plugin`.
@@ -169,7 +185,9 @@ Witnessed by `lifecycle/an-awaited-want-does-not-hold-back-a-later-plugin` and
 2. releases it in the core with `weivel_release_plugin`;
 3. drains, dispatching every event that release queued to the plugin, so a want it still waited on is rejected
    `stopped` to it;
-4. ends the plugin's own entries: its watches, listeners, registrations and answerers;
+4. ends the plugin's own entries: drops its watches, listeners, registrations and answerers from the layer's tables,
+   calling nothing in the core, since the release has already ended them there and a call with their handles would
+   only be refused as stale;
 5. forgets it with `weivel_forget_plugin`, dropping whatever the revocations that call queues name;
 6. drops it from every table of the host's.
 
@@ -186,10 +204,12 @@ Witnessed by `lifecycle/a-release-deactivates-then-releases-then-forgets`.
 2. unloads every C library it loaded; an unload that fails is reported to the error sink and the rest still unload;
 3. disarms the timer and destroys the core, whatever the steps before it reported.
 
-A call made on the host after it is destroyed, a verify among them, answers quietly: it answers that the host is
-destroyed, as a value, and neither throws nor writes to the log or the error sink. Nothing the destroy sets off, an
-in-flight activate ending with it included, reaches the host's caller or its sinks. A second destroy answers the
-first one's result.
+Destroy does not free the host object itself. A call made on the host after it is destroyed, a verify among them,
+answers quietly: it answers that the host is destroyed, as a value, and neither throws nor writes to the log or the
+error sink. Nothing the destroy sets off, an in-flight activate ending with it included, reaches the host's caller or
+its sinks. A second destroy answers the first one's result. In a language that frees memory by hand, the host is
+freed by a separate call made after destroy, and calls on it are defined only until that free; a language whose
+memory is collected frees it when the last reference goes.
 
 Witnessed by `lifecycle/destroy-releases-a-plugin-whose-activate-is-in-flight`.
 
@@ -200,10 +220,11 @@ declared function.
 
 - The input crosses borrowed: the layer passes the language's bytes for the length of the call and never copies them
   where the language can lend its memory.
-- The output is the library's and is handed to the library's declared release symbol before the call answers. A
-  language that can hold native memory past that release answers the bytes in place under its own ownership rules;
-  one that cannot, a garbage-collected language among them, copies them once into its own memory first, and never
-  more than once.
+- The output is the library's, freed only by the library's declared release symbol, and bytes are never answered
+  after their release. One of two things happens: either the layer copies the bytes once into the language's own
+  memory and then releases them before the call answers, which a garbage-collected language must do; or the layer
+  answers the bytes in place and defers the release until the language's owner of them drops them, calling the
+  release symbol then. Never more than one copy.
 - A status other than 0 answers a failure carrying the status and the body, read as UTF-8 where it is one.
 - Unloading unregisters every service of the library and refuses any call made after it.
 - There is no other function kind: the value 1 is retired, and a declaration naming any other kind is refused by the
