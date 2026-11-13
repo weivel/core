@@ -65,7 +65,8 @@ Loads the core's binary and owns the one wrapper every call goes through.
   caller's mistake.
 - A call and its drain are one step against every other call: the events drained after a call are that call's, and
   no other thread's call may land between them. A language with several threads either holds one layer lock across
-  the call and its drain, or makes every call on one owning thread that others hand their calls to. One thread drains.
+  the call and its drain, or makes every call on one owning thread that others hand their calls to. No two threads
+  drain at once; under the lock each caller drains its own call.
 - It may not keep a list of which calls move a deadline, interpret a handle, or call any core function outside the
   wrapper.
 
@@ -111,7 +112,8 @@ Witnessed by `want/a-timed-want-arms-the-timer-at-its-deadline`, `want/a-settled
 
 What a plugin sees of the core, and the only way it reaches any of it. A context is built for a plugin when the host
 opens it. Once the plugin is released or quarantined its listeners still hear the events its release or quarantine
-call itself queued, its wants rejected `stopped` among them, and nothing queued after them; a call it still makes
+call itself queued, its wants rejected `stopped` among them, and nothing queued after them, which is why its entries
+end only once those events are dispatched (see the host's release); a call it still makes
 reaches the core as a late call, which the core answers.
 
 - **Services.** A plugin gets a service registered now, wants one, watches one, lists the ids it may reach that are
@@ -169,7 +171,8 @@ provided by the host, and its object is answered as any provider's is.
 3. as each activate settles, quarantines the plugin when it failed, with a reason saying so and a fix, and otherwise
    verifies it with `weivel_verify_activation`; a verification the core refuses quarantines the plugin in the same
    step, before anything else runs, with no reason of the host's, so its ledger row shows the core's refusal;
-4. returns once every activate has been started, without blocking on any of them settling; each plugin's outcome,
+4. returns once every activate has been started, without blocking on any of them settling, and returns the plan, its
+   order the order the activates were started in, so the caller can read it at once; each plugin's outcome,
    active, quarantined or refused, arrives later, in whatever form the language uses for a result that comes later
    (a promise, a future, a callback the caller registers, or an outcome the caller reads back). A host whose
    activation blocked until every activate settled would never return while an activate waits on a want nothing
@@ -183,13 +186,20 @@ Witnessed by `lifecycle/an-awaited-want-does-not-hold-back-a-later-plugin` and
 1. calls its deactivate, if it offers one, while the plugin is still whole, so the deactivate can still use what it
    holds; a deactivate that fails is reported to the error sink and the release goes on;
 2. releases it in the core with `weivel_release_plugin`;
-3. drains, dispatching every event that release queued to the plugin, so a want it still waited on is rejected
-   `stopped` to it;
-4. ends the plugin's own entries: drops its watches, listeners, registrations and answerers from the layer's tables,
-   calling nothing in the core, since the release has already ended them there and a call with their handles would
-   only be refused as stale;
+3. drains, and lets every event that release queued be dispatched to the plugin, so a want it still waited on is
+   rejected `stopped` to it;
+4. once those events have been dispatched, and not before, ends the plugin's own entries: drops its watches,
+   listeners, registrations and answerers from the layer's tables, calling nothing in the core, since the release has
+   already ended them there and a call with their handles would only be refused as stale;
 5. forgets it with `weivel_forget_plugin`, dropping whatever the revocations that call queues name;
 6. drops it from every table of the host's.
+
+A release made inside a dispatch cannot dispatch its own events in step 3, because the dispatcher is never re-entered
+and those events join the end of the queue. So steps 4 to 6 are never done eagerly there: the layer puts them on the
+dispatch queue as a deferred step behind the events the release queued, and they run once those events have been
+dispatched. The same holds for a quarantine (its entries end after the events its quarantine call queued) and for each
+release a destroy makes. `lifecycle/a-release-deactivates-then-releases-then-forgets` exercises only a release made
+at the top level, outside any dispatch; the deferred case is held by review and the language's own tests.
 
 A plugin whose activate is still running when it is released is released the same way, and its activate settling
 later verifies nothing, quarantines nothing and reports nothing: no activation is left settling for a plugin the host
