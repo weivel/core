@@ -20,11 +20,23 @@ static void report_pending(const weivel_core *core, uint32_t *pending_events) {
     }
 }
 
+/** Announces the earliest deadline when it is not the one last announced, after everything else the call queued. */
+static void announce_deadline(weivel_core *core) {
+    weivel_deadline_event earliest = {0, 0};
+    earliest.set = weivel_deadlines_earliest(core->deadlines, &earliest.at) ? 1u : 0u;
+    if (earliest.set == core->announced.set && earliest.at == core->announced.at) {
+        return;
+    }
+    core->announced = earliest;
+    weivel_events_announce_deadline(core->events, &earliest);
+}
+
 void weivel_core_end_call(weivel_core *core, uint32_t *pending_events) {
     weivel_events_unreserve(core->events, core->notices);
     core->notices = 0;
     weivel_registry_finish(core);
     weivel_capabilities_finish(core);
+    announce_deadline(core);
     report_pending(core, pending_events);
 }
 

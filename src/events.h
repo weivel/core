@@ -77,4 +77,10 @@ void weivel_events_deliver_watch(weivel_events *events, const weivel_watch_event
 void weivel_events_deliver_revoked(weivel_events *events, const weivel_revoked_event *revoked);
 void weivel_events_deliver_capability(weivel_events *events, const weivel_capability_event *heard);
 
+/**
+ * Queues the core's earliest deadline, last, in room the queue keeps for it from its creation, so it needs no memory
+ * and cannot fail. At most one waits: an announcement not yet drained is taken out first.
+ */
+void weivel_events_announce_deadline(weivel_events *events, const weivel_deadline_event *deadline);
+
 #endif

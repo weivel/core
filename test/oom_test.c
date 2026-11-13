@@ -108,6 +108,9 @@ static void put_events(weivel_core *core, picture *into) {
                 event.data.capability.implementation);
             put(into, "%llu|", event.data.capability.change, 0, 0);
             break;
+        case WEIVEL_EVENT_DEADLINE:
+            put(into, "deadline %llu %llu|", event.data.deadline.set, (unsigned long long)event.data.deadline.at, 0);
+            break;
         default:
             break;
         }
@@ -622,8 +625,58 @@ static void a_discarded_want_leaves_no_log_of_its_question(void) {
     CHECK(discarded > 0);
 }
 
+static weivel_handle want_timed(world *made, weivel_handle plugin, const char *id, int64_t timeout) {
+    weivel_want_options options = WEIVEL_INIT(weivel_want_options);
+    options.timed = WEIVEL_CHOICE_YES;
+    options.now = 10;
+    options.timeout_millis = timeout;
+    weivel_handle want = 0;
+    CHECK(weivel_want_service(made->core, plugin, id, &options, &want, NULL) == WEIVEL_STATUS_OK);
+    return want;
+}
+
+static void world_with_two_timed_wants(world *made) {
+    make_world(made);
+    made->want = want_timed(made, made->notes, "calendar:events", 50);
+    want_timed(made, made->notes, "clock", 500);
+}
+
+static weivel_status advance_past_the_first(world *made) {
+    return weivel_advance(made->core, 60, NULL);
+}
+
+static weivel_status withdraw_the_first(world *made) {
+    return weivel_unregister(made->core, made->want, NULL);
+}
+
+static void world_with_a_timed_want(world *made) {
+    make_world(made);
+    made->want = want_timed(made, made->notes, "calendar:events", 50);
+}
+
+static void world_with_a_polling_want(world *made) {
+    make_world(made);
+    weivel_want_options options = WEIVEL_INIT(weivel_want_options);
+    options.poll_millis = 100;
+    CHECK(weivel_want_service(made->core, made->picky, "calendar:events", &options, &made->want, NULL) ==
+          WEIVEL_STATUS_OK);
+}
+
+static weivel_status a_poll_ends(world *made) {
+    return weivel_advance(made->core, 100, NULL);
+}
+
+static weivel_status release_notes(world *made) {
+    return weivel_release_plugin(made->core, made->notes, NULL);
+}
+
 int main(void) {
     a_discarded_want_leaves_no_log_of_its_question();
+    sweep("advance past one timed want, another waiting", world_with_two_timed_wants, advance_past_the_first);
+    sweep("withdraw the earliest timed want", world_with_two_timed_wants, withdraw_the_first);
+    sweep("register before a timed want", world_with_a_timed_want, calendar_registers);
+    sweep("advance to the end of a poll", world_with_a_polling_want, a_poll_ends);
+    sweep("release a consumer with timed wants", world_with_two_timed_wants, release_notes);
     sweep("register a manifest", make_world, register_a_manifest);
     sweep("register a malformed manifest", make_world, register_a_malformed_manifest);
     supports_answers_a_whole_refusal_or_none();

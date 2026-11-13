@@ -158,6 +158,9 @@ static void advancing_before_a_deadline_settles_nothing(void) {
     CHECK(weivel_deadlines_add(core->deadlines, 100, 7) == WEIVEL_STATUS_OK);
     CHECK(weivel_next_deadline(core, &deadline, NULL) == WEIVEL_STATUS_OK);
     CHECK(deadline == 100);
+    CHECK(weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_OK);
+    CHECK(event.kind == WEIVEL_EVENT_DEADLINE && event.data.deadline.set == 1 && event.data.deadline.at == 100);
+    weivel_event_release(&event);
 
     CHECK(weivel_advance(core, 99, &pending) == WEIVEL_STATUS_OK);
     CHECK(pending == 0);
@@ -165,11 +168,14 @@ static void advancing_before_a_deadline_settles_nothing(void) {
     CHECK(deadline == 100);
 
     CHECK(weivel_advance(core, 100, &pending) == WEIVEL_STATUS_OK);
-    CHECK(pending == 1);
+    CHECK(pending == 2);
     CHECK(weivel_next_deadline(core, &deadline, NULL) == WEIVEL_STATUS_NONE);
     CHECK(weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_OK);
     CHECK(event.kind == WEIVEL_EVENT_LOG);
     check_text(event.data.log.text, "1 deadlines came due at 100", "settled log");
+    weivel_event_release(&event);
+    CHECK(weivel_next_event(core, &event, NULL) == WEIVEL_STATUS_OK);
+    CHECK(event.kind == WEIVEL_EVENT_DEADLINE && event.data.deadline.set == 0 && event.data.deadline.at == 0);
     weivel_event_release(&event);
     weivel_core_destroy(core);
 }
