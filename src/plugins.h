@@ -34,6 +34,8 @@ typedef struct weivel_reach_record {
     uint32_t code;
     weivel_handle plugin;
     char *id;
+    /** The fix its reach event carried, so the ledger answers has_fix from the same text the event did. */
+    char *fix;
     uint64_t sequence;
 } weivel_reach_record;
 

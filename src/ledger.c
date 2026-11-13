@@ -6,6 +6,7 @@
 
 #include "core_internal.h"
 #include "sized.h"
+#include "text.h"
 
 void weivel_ids_clear(weivel_ids *ids) {
     for (uint32_t index = 0; index < ids->count; index++) {
@@ -65,20 +66,11 @@ bool weivel_kept_refusal_held(const weivel_kept_refusal *refusal) {
     return refusal->detail != NULL;
 }
 
-static char *copy_text(const char *text) {
-    size_t length = strlen(text) + 1;
-    char *copy = weivel_memory_allocate(length);
-    if (copy != NULL) {
-        memcpy(copy, text, length);
-    }
-    return copy;
-}
-
 bool weivel_kept_refusal_copy(weivel_kept_refusal *kept, uint32_t code, const char *subject, const char *detail,
                               const char *fix) {
-    char *detail_copy = copy_text(detail);
-    char *fix_copy = copy_text(fix);
-    char *subject_copy = subject == NULL ? NULL : copy_text(subject);
+    char *detail_copy = weivel_text_copy(detail);
+    char *fix_copy = weivel_text_copy(fix);
+    char *subject_copy = subject == NULL ? NULL : weivel_text_copy(subject);
     if (detail_copy == NULL || fix_copy == NULL || (subject != NULL && subject_copy == NULL)) {
         free(detail_copy);
         free(fix_copy);
@@ -347,7 +339,7 @@ static void put_snapshot(weivel_layout *layout, const weivel_core *core, const w
             refusals[at].id = id;
             refusals[at].code = record->code;
             refusals[at].subject = id;
-            refusals[at].has_fix = 1;
+            refusals[at].has_fix = weivel_events_has_fix(record->fix);
         }
     }
     snapshot->rows = row_count == 0 ? NULL : rows;

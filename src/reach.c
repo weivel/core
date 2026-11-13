@@ -6,8 +6,13 @@
 #include "registry.h"
 #include "text.h"
 
+static void free_texts(weivel_reach_record *record) {
+    free(record->id);
+    free(record->fix);
+}
+
 static weivel_reach_record *append_record(weivel_registry *registry, weivel_plugin *plugin, uint32_t kind,
-                                          uint32_t code, const char *id) {
+                                          uint32_t code, const char *id, const char *fix) {
     if (plugin->reported_count == plugin->reported_capacity) {
         if (plugin->reported_capacity > UINT32_MAX / 2) {
             return NULL;
@@ -20,17 +25,19 @@ static weivel_reach_record *append_record(weivel_registry *registry, weivel_plug
         plugin->reported = grown;
         plugin->reported_capacity = capacity;
     }
-    size_t length = strlen(id) + 1;
-    char *copy = weivel_memory_allocate(length);
-    if (copy == NULL) {
+    char *id_copy = weivel_text_copy(id);
+    char *fix_copy = weivel_text_copy(fix);
+    if (id_copy == NULL || fix_copy == NULL) {
+        free(id_copy);
+        free(fix_copy);
         return NULL;
     }
-    memcpy(copy, id, length);
     weivel_reach_record *record = &plugin->reported[plugin->reported_count++];
     record->kind = kind;
     record->code = code;
     record->plugin = plugin->handle;
-    record->id = copy;
+    record->id = id_copy;
+    record->fix = fix_copy;
     record->sequence = registry->next_report++;
     return record;
 }
@@ -43,7 +50,7 @@ static weivel_table *reported_of(weivel_plugin *plugin, uint32_t kind) {
 static void pop_record(weivel_core *core, weivel_plugin *plugin) {
     weivel_reach_record *record = &plugin->reported[--plugin->reported_count];
     weivel_table_remove_text(reported_of(plugin, record->kind), record->id);
-    free(record->id);
+    free_texts(record);
     core->registry->next_report--;
 }
 
@@ -61,12 +68,12 @@ static weivel_status report_kind_once(weivel_core *core, weivel_plugin *plugin, 
     if (reach->detail == NULL || reach->fix == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_reach_record *record = append_record(core->registry, plugin, kind, reach->code, id);
+    weivel_reach_record *record = append_record(core->registry, plugin, kind, reach->code, id, reach->fix);
     if (record == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
     if (weivel_table_add_text(reported, record->id, record->id) != WEIVEL_STATUS_OK) {
-        free(record->id);
+        free_texts(record);
         plugin->reported_count--;
         core->registry->next_report--;
         return WEIVEL_STATUS_OUT_OF_MEMORY;

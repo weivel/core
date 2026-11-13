@@ -45,6 +45,7 @@ static void free_plugin(weivel_plugin *plugin) {
     weivel_table_destroy(plugin->reported_capabilities);
     for (uint32_t index = 0; index < plugin->reported_count; index++) {
         free(plugin->reported[index].id);
+        free(plugin->reported[index].fix);
     }
     free(plugin->reported);
     free(plugin->declarations);
