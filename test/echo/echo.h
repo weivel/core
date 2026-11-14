@@ -36,6 +36,20 @@ ECHO_API int32_t echo_fail(const uint8_t *input, size_t input_length, uint8_t **
 /** Answers 0 and two bytes that are not UTF-8, so a binding can prove it refuses to read them as text. */
 ECHO_API int32_t echo_garbage(const uint8_t *input, size_t input_length, uint8_t **output, size_t *output_length);
 
+/**
+ * Answers 0 and 8 bytes holding, in the platform's byte order, the address of the input it was handed, so a binding
+ * can prove whether its caller's bytes reached the library without a copy.
+ */
+ECHO_API int32_t echo_where(const uint8_t *input, size_t input_length, uint8_t **output, size_t *output_length);
+
+/**
+ * Answers 0 and 8 bytes holding, in the platform's byte order, how many non-NULL bodies echo_release has freed so
+ * far, so a binding can prove it releases every body it was answered.
+ *
+ * @implNote The count is kept without synchronisation, so a test reads it only while no other thread releases.
+ */
+ECHO_API int32_t echo_released(const uint8_t *input, size_t input_length, uint8_t **output, size_t *output_length);
+
 /** Frees a body any call answered; NULL is a no-op. */
 ECHO_API void echo_release(uint8_t *buffer);
 
