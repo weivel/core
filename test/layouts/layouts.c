@@ -28,7 +28,7 @@ static void print_size(const char *type, size_t size) {
 
 #define FIELD(type, member)                                                                  \
     do {                                                                                     \
-        type instance;                                                                       \
+        static type instance;                                                                \
         print_field(#type, #member, &instance, &instance.member, sizeof instance.member);    \
     } while (0)
 
