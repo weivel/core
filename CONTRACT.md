@@ -66,7 +66,8 @@ Loads the core's binary and owns the one wrapper every call goes through.
   drained, whatever the copy does, so the core never meets an unreleased event. An event whose texts or arrays the
   layer cannot copy is still dispatched, because a settlement or a revocation that went unheard would never be heard
   again: every handle, kind, code and number exact, each text a fixed sentence of the layer's own, the event marked
-  incomplete, and the error sink told. Only an event of which the layer cannot hold even that is dropped, reported to
+  incomplete, and the error sink told. An event of a kind the layer does not know is released and ignored without a
+  report, as the core's header asks; only an event the layer cannot hold even that much of is dropped, reported to
   the error sink, and the rest are still drained.
 - A refused call is answered to the caller with the refusal the core queued for it, read from the drained events.
   Where the core queues none, the layer answers the status alone, with the reason the core's documentation gives
@@ -125,7 +126,8 @@ Arms the core's next deadline on the language's own timer.
   thread drained it.
 - Beside the wrapper's check (see `core`) and the time a context hands the core with a want or a capacity answer that
   needs one, the clock is read only by the timer: when its callback runs, and when it schedules a wait that ends short
-  of the deadline.
+  of the deadline. A language whose scheduler takes a delay rather than a time also reads it each time it schedules,
+  in its scheduler or its timer, to turn the deadline into that delay.
 - When the timer fires it hands the core the time through the wrapper with `weivel_advance(now)`. The events that
   call queues re-arm or disarm it as any others do.
 - A language whose timer cannot wait as long as a deadline lies away waits as long as it can and arms again when that
@@ -145,11 +147,12 @@ Witnessed by `want/a-timed-want-arms-the-timer-at-its-deadline`, `want/a-settled
 ## `context`
 
 What a plugin sees of the core, and the only way it reaches any of it. A context is built for a plugin no later than
-the host opens it, and an event drained before a context was made never reaches it, since the handle it names may
-then have stood for another plugin. Once the plugin is released or quarantined its listeners still hear the events
-its release or quarantine call itself queued, its wants rejected `stopped` among them, and nothing queued after them,
-which is why its entries end only once those events are dispatched (see the host's release). A call it still makes
-reaches the core as a late call, which the core answers, and a want it makes then is still settled to it.
+the host first opens it, and the plugin keeps that one context until it is forgotten, a quarantined plugin opened
+again included. An event drained before a context was made never reaches it, since the handle it names may then have
+stood for another plugin. Once the plugin is released or quarantined its listeners still hear the events its release
+or quarantine call itself queued, its wants rejected `stopped` among them, and nothing queued after them, which is why
+its entries end only once those events are dispatched (see the host's release). A call it still makes reaches the
+core as a late call, which the core answers, and a want it makes then is still settled to it.
 
 Once the core has forgotten the plugin, its context is detached: every call through it that would reach the core is
 answered as detached, an answer of its own that is neither a success nor the core's refusal, without reaching the
@@ -168,6 +171,9 @@ as its forget, so no call that passed the check reaches the core after the forge
   - A watch hears every later registration and unregistration the core reports for the id, the object on the one and
     nothing on the other, until the plugin stops watching.
   - A registration lasts until the plugin unregisters it or stops.
+  - A get, a list of the ids, a watch and a listing of a capability's implementations that the core refuses each
+    answer that refusal, never an empty answer or a watch that hears nothing. A get that finds nothing registered
+    answers absence, which is not a refusal.
 - **Capacity answering is opt-in at registration.** A plugin that registers a service may hand the layer what answers
   a constrained want's questions about it: its live attributes and whether it serves a consumer under given
   constraints. Each `WEIVEL_EVENT_CAPACITY_WANTED` is put to that answerer and its answer reported with
@@ -237,6 +243,10 @@ once they have run, so no plugin stays open in the core until destroy without an
 the next plugin, so the caller still receives the plan and every other outcome and no started plugin is left running
 without one.
 
+A plugin is opened once while it stays open. An open, or an activation, of a plugin the host holds open, or whose
+activate is in flight, is refused by the core before the host builds anything for it, its outcome `refused`, and the
+plugin's context is unchanged. A quarantined plugin may be opened again, and keeps its context.
+
 A verification the caller asks for is carried out as step 3 carries one out. One of a plugin the host never opened is
 answered as the core answers it and quarantines nothing, since the host holds nothing of that plugin open.
 
@@ -276,6 +286,9 @@ settling for a plugin the host no longer holds.
 A plugin's own code may still run after its release and after the destroy has finished, so a language that loads a
 plugin's code from a library it opened closes that library only when the host is freed.
 
+A release of a plugin the host has not opened, registered only or already forgotten, answers that there was nothing to
+release and does nothing.
+
 Witnessed by `lifecycle/a-release-deactivates-then-releases-then-forgets`.
 
 **Destroy.** Destroying the host:
@@ -284,9 +297,11 @@ Witnessed by `lifecycle/a-release-deactivates-then-releases-then-forgets`.
    included, in the reverse of the order it opened them, so a consumer is released while what it consumes is still
    there. Each release calls the plugin's deactivate when its activate was called, a quarantined plugin's among them.
    A plugin whose open the core refused was never opened and is never released, and one whose open failed was
-   released when it failed, if the core held it open at all. The destroy waits for every open and every settling of
-   an activate begun while the host was running. A plugin opened as the destroy began is released at once without
-   its activate being called, and a plugin of a plan not yet started is not opened; each is answered `released`;
+   released when it failed, if the core held it open at all. The destroy waits for every open begun while the host
+   was running, and for every settling of an activate that was already under way as it began; it never waits for an
+   activate to settle, and an activate that has not settled is released as in flight. A plugin opened as the destroy
+   began is released at once without its activate being called, and a plugin of a plan not yet started is not opened;
+   each is answered `released`;
 2. dispatches every event those releases queued and runs every deferred step they left to completion, each release's
    forget included, so no listener, deferred step or core call is left to run once the core is gone;
 3. unloads every C library it loaded; an unload that fails is reported to the error sink and the rest still unload;
@@ -321,10 +336,13 @@ declared function.
   memory and then releases them before the call answers, which a garbage-collected language must do; or the layer
   answers the bytes in place and defers the release until the language's owner of them drops them, calling the
   release symbol then. Never more than one copy.
-- A status other than 0 answers a failure carrying the status and the body, read as UTF-8 where it is one.
+- A status other than 0 answers a failure carrying the status and the body as bytes, the body read as UTF-8 text
+  only where it is well-formed UTF-8.
 - Unloading closes the library to calls at once: it unregisters every service of the library, and a call made after
   it through an object a consumer still holds is refused. The library's binary is closed only once no call is
   running in it and no bytes it answered are held, whichever ends last.
+- A load that fails partway, as when the core refuses one of its registrations, is undone as an unload: what it
+  registered is unregistered, and its binary is closed once nothing of it can run.
 - A load is refused as the caller's mistake, answered to the caller and reported to no sink, when an id it declares
   appears twice in the declaration or is already registered under the host, by another live library, a plugin or the
   host itself, because a registration under `WEIVEL_HOST` replaces one. The host's own registration of an id a live
