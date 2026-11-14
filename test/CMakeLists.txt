@@ -36,5 +36,15 @@ set_target_properties(echo PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/shared)
 weivel_test(echo_test echo)
 
+add_executable(layouts layouts/layouts.c)
+target_include_directories(layouts PRIVATE ${PROJECT_SOURCE_DIR}/include)
+weivel_strict_warnings(layouts)
+add_test(NAME layouts_end_every_field_within_its_struct
+    COMMAND ${CMAKE_COMMAND} -DLAYOUTS=$<TARGET_FILE:layouts> -DCHECK=fit
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/layouts/layouts_check.cmake)
+add_test(NAME layouts_list_every_public_struct
+    COMMAND ${CMAKE_COMMAND} -DLAYOUTS=$<TARGET_FILE:layouts> -DCHECK=complete
+        -DHEADERS=${PROJECT_SOURCE_DIR}/include -P ${CMAKE_CURRENT_SOURCE_DIR}/layouts/layouts_check.cmake)
+
 add_test(NAME public_headers_are_ascii
     COMMAND ${CMAKE_COMMAND} -DDIRECTORY=${PROJECT_SOURCE_DIR}/include -P ${CMAKE_CURRENT_SOURCE_DIR}/ascii_check.cmake)
