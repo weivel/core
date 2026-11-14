@@ -123,8 +123,9 @@ Arms the core's next deadline on the language's own timer.
   announcement waiting and queues each after every other event of its call, the latest one drained is always the
   current deadline, and where several threads drain, the timer ends armed for the latest one drained, whichever
   thread drained it.
-- Beside the wrapper's check (see `core`), the clock is read only by the timer: when its callback runs, and when it
-  schedules a wait that ends short of the deadline.
+- Beside the wrapper's check (see `core`) and the time a context hands the core with a want or a capacity answer that
+  needs one, the clock is read only by the timer: when its callback runs, and when it schedules a wait that ends short
+  of the deadline.
 - When the timer fires it hands the core the time through the wrapper with `weivel_advance(now)`. The events that
   call queues re-arm or disarm it as any others do.
 - A language whose timer cannot wait as long as a deadline lies away waits as long as it can and arms again when that
