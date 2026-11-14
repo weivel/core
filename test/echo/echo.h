@@ -44,9 +44,11 @@ ECHO_API int32_t echo_where(const uint8_t *input, size_t input_length, uint8_t *
 
 /**
  * Answers 0 and 8 bytes holding, in the platform's byte order, how many non-NULL bodies echo_release has freed so
- * far, so a binding can prove it releases every body it was answered.
+ * far, so a binding can prove it releases every body it was answered. A read counts itself: the body it answers is
+ * counted once released, so two reads in a row, each released, differ by one.
  *
- * @implNote The count is kept without synchronisation, so a test reads it only while no other thread releases.
+ * @implNote The count is kept without synchronisation and stays so, so it may be read only while no other thread
+ * releases: a test that releases from several threads must not assert on it.
  */
 ECHO_API int32_t echo_released(const uint8_t *input, size_t input_length, uint8_t **output, size_t *output_length);
 
