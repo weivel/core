@@ -39,12 +39,26 @@ weivel_test(echo_test echo)
 add_executable(layouts layouts/layouts.c)
 target_include_directories(layouts PRIVATE ${PROJECT_SOURCE_DIR}/include)
 weivel_strict_warnings(layouts)
-add_test(NAME layouts_end_every_field_within_its_struct
-    COMMAND ${CMAKE_COMMAND} -DLAYOUTS=$<TARGET_FILE:layouts> -DCHECK=fit
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/layouts/layouts_check.cmake)
-add_test(NAME layouts_list_every_public_struct
-    COMMAND ${CMAKE_COMMAND} -DLAYOUTS=$<TARGET_FILE:layouts> -DCHECK=complete
+add_test(NAME layouts_list_every_public_struct_and_field
+    COMMAND ${CMAKE_COMMAND} -DLAYOUTS=$<TARGET_FILE:layouts>
         -DHEADERS=${PROJECT_SOURCE_DIR}/include -P ${CMAKE_CURRENT_SOURCE_DIR}/layouts/layouts_check.cmake)
+foreach(scenario
+        layouts_check_reads_every_shape_of_field
+        layouts_check_refuses_a_struct_without_a_layout
+        layouts_check_refuses_a_layout_no_header_declares
+        layouts_check_refuses_a_struct_defined_after_its_forward_typedef
+        layouts_check_refuses_an_anonymous_typedef_struct
+        layouts_check_refuses_a_struct_with_a_comment_before_its_brace
+        layouts_check_refuses_a_forgotten_field
+        layouts_check_refuses_fields_out_of_order
+        layouts_check_refuses_fields_without_a_sizeof_line
+        layouts_check_refuses_a_malformed_line)
+    add_test(NAME ${scenario}
+        COMMAND ${CMAKE_COMMAND} -DSCENARIO=${scenario} -DWORK=${CMAKE_CURRENT_BINARY_DIR}/layouts-work
+            -DLAYOUTS=$<TARGET_FILE:layouts> -DHEADERS=${PROJECT_SOURCE_DIR}/include
+            -DCHECK_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/layouts/layouts_check.cmake
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/layouts/layouts_check_test.cmake)
+endforeach()
 
 add_test(NAME public_headers_are_ascii
     COMMAND ${CMAKE_COMMAND} -DDIRECTORY=${PROJECT_SOURCE_DIR}/include -P ${CMAKE_CURRENT_SOURCE_DIR}/ascii_check.cmake)

@@ -14,7 +14,12 @@
  *
  * A struct's field lines come in declaration order and are followed by its sizeof line. A field of struct type is one
  * line; that struct is listed by its own name. A member of an unnamed union is named after the union's field, as in
- * `weivel_event data.want`, and sits at the union's offset. An opaque struct has no layout and is not listed.
+ * `weivel_event data.want`, and sits at the union's offset, after a line for the union's field itself. An opaque
+ * struct has no layout and is not listed.
+ *
+ * An array field is one line carrying the array's total size and no element count, as `weivel_event data.reserved`
+ * does, so a consumer takes the element type and count from its own declaration. Lines end in CRLF on Windows, where
+ * stdout is a text stream, and in LF elsewhere, so a consumer strips a trailing carriage return before splitting.
  */
 
 static void print_field(const char *type, const char *field, const void *instance, const void *member,
