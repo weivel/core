@@ -247,7 +247,6 @@ static void tell_watchers(weivel_core *core, weivel_registration *registration, 
     }
 }
 
-/** Tells the holder its holding is revoked and keeps the holding, revoked, until its holder releases it. */
 static void revoke_awaiting_release(weivel_core *core, weivel_holding *holding) {
     weivel_revoked_event revoked = {holding->plugin->handle, holding->registration->handle};
     weivel_events_deliver_revoked(core->events, &revoked);
@@ -258,7 +257,6 @@ static void revoke_awaiting_release(weivel_core *core, weivel_holding *holding) 
     core->registry->revoked_holding_count++;
 }
 
-/** Tells the owner of an unregistered registration that nothing holds it any more, and frees it. */
 static void report_released(weivel_core *core, weivel_registration *registration) {
     weivel_holdings_released_event released = {registration->owner_handle, registration->handle};
     weivel_events_deliver_released(core->events, &released);
@@ -266,7 +264,6 @@ static void report_released(weivel_core *core, weivel_registration *registration
     free(registration);
 }
 
-/** Ends a revoked holding; the last one of its registration reports the registration released. */
 static void end_revoked_holding(weivel_core *core, weivel_holding *holding) {
     weivel_registration *registration = holding->registration;
     weivel_table_remove(core->registry->holdings, &holding->key, sizeof holding->key);
@@ -280,7 +277,6 @@ static void end_revoked_holding(weivel_core *core, weivel_holding *holding) {
     }
 }
 
-/** Keeps an unregistered registration awaiting releases until its last holding ends, or reports it now. */
 static void depart(weivel_core *core, weivel_registration *registration) {
     registration->owner_handle = registration->owner == NULL ? WEIVEL_HOST : registration->owner->handle;
     registration->owner = NULL;
@@ -495,7 +491,6 @@ static weivel_status prepare_arrival(weivel_core *core, weivel_slot *slot, const
     return status;
 }
 
-/** Reserves the release report a registration awaiting releases owes its owner, before anything changes. */
 static weivel_status reserve_release_report(weivel_core *core, const weivel_registration *registration) {
     return registration->awaits_releases ? weivel_events_reserve(core->events, 1) : WEIVEL_STATUS_OK;
 }
