@@ -304,7 +304,8 @@ typedef struct weivel_revoked_event {
 /**
  * The end of a registration's last holding: `owner` registered `registration` with
  * weivel_register_service_awaiting_releases, and it was unregistered and every holding of it has ended since. `owner`
- * is WEIVEL_HOST for the host, and may name a plugin forgotten since, as half of a key only.
+ * is WEIVEL_HOST for the host, and may name a plugin forgotten since. `registration` was released when it was
+ * unregistered, so it is stale too: each is half of a key only, never a handle to call with.
  */
 typedef struct weivel_holdings_released_event {
     weivel_handle owner;
@@ -1030,9 +1031,10 @@ WEIVEL_API weivel_status weivel_release_holding(weivel_core *core, weivel_handle
  *
  * Unregistering revokes the service from everyone who holds it, each by a WEIVEL_EVENT_REVOKED. A plugin holds a
  * registration from the moment the core hands it that registration's handle, by a `get`, a settled `want` or a
- * watch hearing it registered, until the registration ends or the plugin is released or quarantined. Each holder
- * is told once however often it resolved the service. Then every watch of the id that accepts the owner hears it
- * unregistered.
+ * watch hearing it registered, until the registration ends or the plugin is released or quarantined; a holding of a
+ * registration weivel_register_service_awaiting_releases made outlives the registration, revoked, until
+ * weivel_release_holding ends it or the plugin is released, quarantined or forgotten. Each holder is told once
+ * however often it resolved the service. Then every watch of the id that accepts the owner hears it unregistered.
  *
  * @param handle a registration, watch or want handle.
  * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for a handle that names none of them any more
