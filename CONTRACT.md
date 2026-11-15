@@ -202,7 +202,9 @@ as its forget, so no call that passed the check reaches the core after the forge
   using it; a refusal of reach; a constrained want that settled degraded; and, for a service it registered with
   `weivel_register_service_awaiting_releases`, its `WEIVEL_EVENT_HOLDINGS_RELEASED`, which the layer drains as any
   event and hands to the plugin that owns the registration, telling it nothing holds what it registered any more, so
-  whatever stood behind it may be freed. An owner released or forgotten since hears nothing, and the layer drops it.
+  whatever stood behind it may be freed. An owner hears it as it hears any event about it: one that its own release
+  or quarantine call queued, as when nothing held the registration then, still reaches its listeners; one queued
+  after those events, or after it was forgotten, reaches no one, and the layer drops it.
 - **Log.** A plugin's log is the host's to direct. The core's own log events go to the host's log at their level.
 - **Manifest.** The plugin's manifest value, as the host registered it.
 - **Listeners never reach a caller.** A listener that fails is reported to the error sink, and every other listener
@@ -389,11 +391,17 @@ function, and a service that declares a definition as that definition.
   revokes every holding of it, each holder told by a `WEIVEL_EVENT_REVOKED`, and the core keeps each holding until it
   is released. A holder stops calling on that revocation, releases every answer, refusal and handle the definition
   gave it, and then releases the holding itself with `weivel_release_holding`; a holder the host releases,
-  quarantines or forgets has its holding ended by the core. A call made after the holder released its holding is the
-  holder's defect and is undefined, as any use of memory after its free is.
-- The library's binary is closed only once the core has queued a `WEIVEL_EVENT_HOLDINGS_RELEASED` for every one of
-  its definition services, no call into a bytes function of it is running and no bytes it answered are held,
-  whichever ends last. A holder that never releases keeps the binary open until the host is freed.
+  quarantines or forgets has its holding ended by the core.
+- A call through a definition made after its holder's holding ended, by `weivel_release_holding` or because the host
+  released, quarantined or forgot the holder, is the holder's defect and is undefined, as any use of memory after its
+  free is: nothing then keeps the binary open for it. A host that hands a definition's address to a caller that holds
+  no registration of it, as a loader that reads it to bind, says where it hands it that the address dies with the
+  binary, since that caller's use keeps nothing open.
+- The library's binary is closed once the core has queued a `WEIVEL_EVENT_HOLDINGS_RELEASED` for every one of its
+  definition services, no call into a bytes function of it is running and no bytes it answered are held, whichever
+  ends last; or at the host's free, since the destroy ends every registration without that event. A language whose
+  memory is collected, and so has no free, closes it once its destroy has destroyed the core. Any address a definition
+  answered is invalid from then on.
 - A load that fails partway, as when the core refuses one of its registrations, is undone as an unload: what it
   registered is unregistered, and its binary is closed once nothing of it can run.
 - A load is refused as the caller's mistake, answered to the caller and reported to no sink, when an id it declares
