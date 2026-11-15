@@ -242,7 +242,13 @@ typedef enum weivel_event_kind {
      * yet drained and is queued last, so what is drained is always the current deadline. Its room in the queue is
      * kept from the core's creation on, so it never needs memory and no call fails for want of it.
      */
-    WEIVEL_EVENT_DEADLINE = 9
+    WEIVEL_EVENT_DEADLINE = 9,
+    /**
+     * Every holding of a registration made by weivel_register_service_awaiting_releases has ended since it was
+     * unregistered, so nothing holds what it stood for; the payload is `data.released`. Queued once per such
+     * registration, to its owner.
+     */
+    WEIVEL_EVENT_HOLDINGS_RELEASED = 10
 } weivel_event_kind;
 
 /**
@@ -294,6 +300,16 @@ typedef struct weivel_revoked_event {
     weivel_handle plugin;
     weivel_handle implementation;
 } weivel_revoked_event;
+
+/**
+ * The end of a registration's last holding: `owner` registered `registration` with
+ * weivel_register_service_awaiting_releases, and it was unregistered and every holding of it has ended since. `owner`
+ * is WEIVEL_HOST for the host, and may name a plugin forgotten since, as half of a key only.
+ */
+typedef struct weivel_holdings_released_event {
+    weivel_handle owner;
+    weivel_handle registration;
+} weivel_holdings_released_event;
 
 /** What a reach refusal is about. */
 typedef enum weivel_reach_kind {
@@ -430,6 +446,7 @@ typedef struct weivel_event {
         weivel_capability_event capability;
         weivel_refusal_event refused;
         weivel_deadline_event deadline;
+        weivel_holdings_released_event released;
         uint64_t reserved[WEIVEL_EVENT_PAYLOAD_WORDS];
     } data;
 } weivel_event;
@@ -976,6 +993,36 @@ WEIVEL_API weivel_status weivel_forget_plugin(weivel_core *core, weivel_handle p
  */
 WEIVEL_API weivel_status weivel_register_service(weivel_core *core, weivel_handle owner, const char *id,
                                                  weivel_handle *registration, uint32_t *pending_events);
+
+/**
+ * Registers a service as weivel_register_service does, with the same parameters and answers, for an owner that must
+ * learn when nothing holds it any more, as one whose object stays usable only until each holder lets go.
+ *
+ * Unregistering it revokes it to each holder as any registration is, but each holding then stays, revoked and not
+ * released, until the holder ends it with weivel_release_holding or the holder is released, quarantined or forgotten.
+ * Once the last of them ends, or at the unregistration itself when nothing held it, one
+ * WEIVEL_EVENT_HOLDINGS_RELEASED tells the owner. The event's room is reserved when the registration is made, so a
+ * registration memory cannot reserve it for is not made.
+ *
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_register_service_awaiting_releases(weivel_core *core, weivel_handle owner,
+                                                                   const char *id, weivel_handle *registration,
+                                                                   uint32_t *pending_events);
+
+/**
+ * Ends `holder`'s revoked holding of `registration`, one weivel_register_service_awaiting_releases made, saying the
+ * holder no longer uses what it stood for. The last one to end queues the owner's WEIVEL_EVENT_HOLDINGS_RELEASED.
+ *
+ * @param holder the plugin, or WEIVEL_HOST, that held the registration when it was unregistered.
+ * @param registration the registration handle the holding was of, already stale as a handle to call with.
+ * @return WEIVEL_STATUS_OK; WEIVEL_STATUS_REFUSED for a holding still live, one of a registration made by
+ * weivel_register_service, one already ended or none at all (WEIVEL_REFUSAL_STALE_HANDLE), queuing a refusal;
+ * WEIVEL_STATUS_MALFORMED for a NULL core.
+ * Threading: any thread.
+ */
+WEIVEL_API weivel_status weivel_release_holding(weivel_core *core, weivel_handle holder, weivel_handle registration,
+                                                uint32_t *pending_events);
 
 /**
  * Ends what a handle stands for: a registration is unregistered, a watch of a service or of a capability stops, and

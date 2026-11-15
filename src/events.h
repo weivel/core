@@ -80,6 +80,7 @@ void weivel_events_deliver_want(weivel_events *events, const weivel_want_event *
 void weivel_events_deliver_watch(weivel_events *events, const weivel_watch_event *heard);
 void weivel_events_deliver_revoked(weivel_events *events, const weivel_revoked_event *revoked);
 void weivel_events_deliver_capability(weivel_events *events, const weivel_capability_event *heard);
+void weivel_events_deliver_released(weivel_events *events, const weivel_holdings_released_event *released);
 
 /**
  * Queues the core's earliest deadline, last, in room the queue keeps for it from its creation, so it needs no memory

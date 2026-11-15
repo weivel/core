@@ -12,7 +12,8 @@
  * allocation, then its second, and so on until the call no longer reaches the failing one. At every step the core
  * must either answer WEIVEL_STATUS_OUT_OF_MEMORY and be exactly as it was before the call (census, ledger and the
  * events it queued), or answer what an unfailed run answers and be exactly as that run left it. Between calls the
- * core must hold one reserved event per want, holding and capability holding, and no other.
+ * core must hold one reserved event per want, holding not revoked, capability holding and release report, and no
+ * other.
  */
 
 #define TEXT_CAPACITY 16384
@@ -108,6 +109,9 @@ static void put_events(weivel_core *core, picture *into) {
                 event.data.capability.implementation);
             put(into, "%llu|", event.data.capability.change, 0, 0);
             break;
+        case WEIVEL_EVENT_HOLDINGS_RELEASED:
+            put(into, "released %llu %llu|", event.data.released.owner, event.data.released.registration, 0);
+            break;
         case WEIVEL_EVENT_DEADLINE:
             put(into, "deadline %llu %llu|", event.data.deadline.set, (unsigned long long)event.data.deadline.at, 0);
             break;
@@ -132,7 +136,8 @@ static bool same_picture(const picture *left, const picture *right) {
 
 /** Between calls every reservation outstanding is one an obligation holds. */
 static bool reservations_balance(const weivel_census *census) {
-    return census->reserved_events == census->wants + census->holdings + census->capability_holdings;
+    return census->reserved_events ==
+           census->wants + census->holdings + census->capability_holdings + census->release_reports;
 }
 
 /** The plugins and handles a scene starts from. */
@@ -484,6 +489,53 @@ static weivel_status forget_notes(world *made) {
     return weivel_forget_plugin(made->core, made->notes, NULL);
 }
 
+static weivel_status calendar_registers_awaiting_releases(world *made) {
+    weivel_handle registration = 0;
+    return weivel_register_service_awaiting_releases(made->core, made->calendar, "calendar:events", &registration,
+                                                     NULL);
+}
+
+/** A registration awaiting releases, held by two plugins and watched by one. */
+static void world_with_holders_awaited(world *made) {
+    make_world(made);
+    CHECK(calendar_registers_awaiting_releases(made) == WEIVEL_STATUS_OK);
+    weivel_handle got = 0;
+    CHECK(weivel_get_service(made->core, made->calendar, "calendar:events", &got, NULL) == WEIVEL_STATUS_OK);
+    made->registration = got;
+    watch_events(made, made->board);
+    get_events(made, made->board);
+    get_events(made, made->notes);
+}
+
+/** The same registration unregistered, so its two holdings are revoked and await their releases. */
+static void world_with_revoked_holdings(world *made) {
+    world_with_holders_awaited(made);
+    CHECK(weivel_unregister(made->core, made->registration, NULL) == WEIVEL_STATUS_OK);
+}
+
+/** One revoked holding left, the notes plugin's. */
+static void world_with_one_revoked_holding(world *made) {
+    world_with_revoked_holdings(made);
+    CHECK(weivel_release_holding(made->core, made->board, made->registration, NULL) == WEIVEL_STATUS_OK);
+}
+
+static weivel_status notes_releases_its_holding(world *made) {
+    return weivel_release_holding(made->core, made->notes, made->registration, NULL);
+}
+
+/** A released holder of a revoked holding, which only its forget ends. */
+static void world_with_a_late_revoked_holder(world *made) {
+    world_with_holders_awaited(made);
+    CHECK(weivel_release_plugin(made->core, made->notes, NULL) == WEIVEL_STATUS_OK);
+    get_events(made, made->notes);
+    CHECK(weivel_unregister(made->core, made->registration, NULL) == WEIVEL_STATUS_OK);
+    CHECK(weivel_release_holding(made->core, made->board, made->registration, NULL) == WEIVEL_STATUS_OK);
+}
+
+static weivel_status release_notes_plugin(world *made) {
+    return weivel_release_plugin(made->core, made->notes, NULL);
+}
+
 static weivel_status host_wants(world *made) {
     weivel_handle want = 0;
     return weivel_want_service(made->core, WEIVEL_HOST, "calendar:events", NULL, &want, NULL);
@@ -703,5 +755,13 @@ int main(void) {
     sweep("watch a capability as the host", world_watching_screens, host_watches_screens);
     sweep("all as the host", world_with_two_verified_screens, host_all);
     sweep("a yes that settles a constrained want", world_with_a_served_question, picky_is_served);
+    sweep("register awaiting releases", make_world, calendar_registers_awaiting_releases);
+    sweep("register awaiting releases before waiting wants and watches", world_awaiting_events,
+          calendar_registers_awaiting_releases);
+    sweep("unregister awaiting releases with holders and a watch", world_with_holders_awaited, unregister_events);
+    sweep("release the last revoked holding", world_with_one_revoked_holding, notes_releases_its_holding);
+    sweep("release a plugin holding a revoked holding", world_with_one_revoked_holding, release_notes_plugin);
+    sweep("release a provider awaiting releases", world_with_holders_awaited, release_calendar);
+    sweep("forget a released plugin holding a revoked holding", world_with_a_late_revoked_holder, forget_notes);
     return check_summary("oom_test");
 }

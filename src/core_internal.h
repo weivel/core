@@ -128,8 +128,14 @@ typedef struct weivel_census {
     uint32_t capability_holdings;
     uint32_t wants;
     uint32_t watches;
-    /** Events reserved and not yet delivered: between calls, exactly one per want, holding and capability holding. */
+    /**
+     * Events reserved and not yet delivered: between calls, exactly one per want, holding not revoked, capability
+     * holding and release report.
+     */
     uint32_t reserved_events;
+    uint32_t revoked_holdings;
+    /** Registrations awaiting releases whose WEIVEL_EVENT_HOLDINGS_RELEASED is still owed. */
+    uint32_t release_reports;
 } weivel_census;
 
 /** Counts a core's records. Takes the core's mutex. */

@@ -226,6 +226,8 @@ void weivel_core_census(weivel_core *core, weivel_census *census) {
     census->wants = core->registry->want_count;
     census->watches = core->registry->watch_count;
     census->reserved_events = weivel_events_reserved(core->events);
+    census->revoked_holdings = core->registry->revoked_holding_count;
+    census->release_reports = core->registry->release_report_count;
     weivel_mutex_unlock(core->mutex);
 }
 
