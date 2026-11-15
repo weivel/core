@@ -353,31 +353,49 @@ Witnessed by `lifecycle/destroy-releases-a-plugin-whose-activate-is-in-flight`.
 
 **C libraries as host services.** The host loads a C library from a declaration value, read by the standard or built
 by the caller, and the library's path, which its caller hands it beside the declaration since a declaration names
-none. It binds each declared function of the standard's bytes kind (`WEIVEL_STANDARD_FUNCTION_BYTES` in the
-standard's `library.h`), and registers each declared service under `WEIVEL_HOST` as an object with one function per
-declared function.
+none. A declared function is of one of the two kinds the standard's `library.h` names, bytes
+(`WEIVEL_STANDARD_FUNCTION_BYTES`) or definition (`WEIVEL_STANDARD_FUNCTION_DEFINITION`), and the host registers each
+declared service under `WEIVEL_HOST`: a service of bytes functions as an object with one function per declared
+function, and a service that declares a definition as that definition.
 
-- The input crosses for the length of the call only: memory the language can lend without holding off its collector
-  is lent, and memory the collector may move is copied once.
-- The output is the library's, freed only by the library's declared release symbol, and bytes are never answered
-  after their release. One of two things happens: either the layer copies the bytes once into the language's own
-  memory and then releases them before the call answers, which a garbage-collected language must do; or the layer
-  answers the bytes in place and defers the release until the language's owner of them drops them, calling the
-  release symbol then. Never more than one copy.
-- A status other than 0 answers a failure carrying the status and the body as bytes, the body read as UTF-8 text
-  only where it is well-formed UTF-8.
-- Unloading closes the library to calls at once: it unregisters every service of the library, and a call made after
-  it through an object a consumer still holds is refused. The library's binary is closed only once no call is
-  running in it and no bytes it answered are held, whichever ends last.
+- A bytes function's input crosses for the length of the call only: memory the language can lend without holding off
+  its collector is lent, and memory the collector may move is copied once.
+- A bytes function's output is the library's, freed only by the library's declared release symbol, and bytes are
+  never answered after their release. One of two things happens: either the layer copies the bytes once into the
+  language's own memory and then releases them before the call answers, which a garbage-collected language must do;
+  or the layer answers the bytes in place and defers the release until the language's owner of them drops them,
+  calling the release symbol then. Never more than one copy.
+- A bytes function's status other than 0 answers a failure carrying the status and the body as bytes, the body read
+  as UTF-8 text only where it is well-formed UTF-8.
+- A definition is a symbol `const void *f(void)` answering a static struct of function pointers that begins with its
+  `uint32_t size` and lives until the library is unloaded. Its layout, its operations and their memory rules are the
+  library's, published in its own header, and the host never reads past `size`. A service that declares a definition
+  declares it as its one function, and a library whose services are all definitions needs no release symbol, since
+  each definition carries its own release.
+- At load the host resolves a definition's symbol, calls it once and registers the pointer it answered as the
+  service's object: in C the pointer itself, and in any other language an object carrying that native address. It
+  adds no wrapper, count or copy, so a consumer's call through a definition is a plain native call. A definition that
+  answers NULL, or a struct whose `size` is below 8 (the `size` and one pointer), refuses the load as the caller's
+  mistake, undone as a load that fails partway.
+- Unloading unregisters every service of the library at once. A call made after it through a bytes object a consumer
+  still holds is refused. A definition is called directly, so no call to it can be refused: its unregistration
+  revokes every holding of it and tells each holder through the core's revocation, and a holder stops calling on
+  that revocation and releases every answer, refusal and handle the definition gave it before it releases the holding
+  itself. A call made after the holder released its holding is the holder's defect and is undefined, as any use of
+  memory after its free is.
+- The library's binary is closed only once every holding of every one of its definition services has been released,
+  no call into a bytes function of it is running and no bytes it answered are held, whichever ends last. A holder
+  that never releases keeps the binary open until the host is freed.
 - A load that fails partway, as when the core refuses one of its registrations, is undone as an unload: what it
   registered is unregistered, and its binary is closed once nothing of it can run.
 - A load is refused as the caller's mistake, answered to the caller and reported to no sink, when an id it declares
   appears twice in the declaration or is already registered under the host, by another live library, a plugin or the
   host itself, because a registration under `WEIVEL_HOST` replaces one. The host's own registration of an id a live
   library declares is refused the same way.
-- There is no other function kind: the value 1 is retired, and a declaration naming any other kind is refused by the
-  standard's reader before the layer sees it. A declaration the caller builds itself with a kind other than bytes is
-  refused by the host as the caller's mistake, answered to the caller and not reported as a defect of the layer.
+- There are two function kinds and no third: the value 1 is retired, and a declaration naming any other kind, or a
+  definition beside another function of its service, is refused by the standard's reader before the layer sees it.
+  A declaration the caller builds itself that does either is refused by the host as the caller's mistake, answered to
+  the caller and not reported as a defect of the layer.
 - The host may use the standard's published declaration types, the layout of a declaration and its kind constants,
   but it never loads or calls the standard's binary.
 

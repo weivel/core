@@ -79,7 +79,63 @@ static void released_does_not_count_a_null_release(void) {
     CHECK(answered_number(echo_released, NULL, 0) == before + 1);
 }
 
+static const echo_definition *definition(void) {
+    return (const echo_definition *)echo_service_definition();
+}
+
+static void a_definition_is_one_static_struct_of_its_own_size(void) {
+    const echo_definition *answered = definition();
+    CHECK(answered != NULL);
+    CHECK(answered == definition());
+    CHECK(answered->size == sizeof(echo_definition));
+    CHECK(answered->echo != NULL && answered->release != NULL && answered->count_unloads != NULL);
+}
+
+static void a_definition_echoes_through_its_pointers(void) {
+    const echo_definition *answered = definition();
+    body echoed = {99, NULL, 0};
+    echoed.status = answered->echo(answered->context, (const uint8_t *)"through", 7, &echoed.bytes, &echoed.length);
+    CHECK(echoed.status == 0);
+    CHECK(echoed.length == 7 && echoed.bytes != NULL && memcmp(echoed.bytes, "through", 7) == 0);
+    answered->release(answered->context, echoed.bytes);
+}
+
+static void a_definition_refuses_a_context_not_its_own(void) {
+    const echo_definition *answered = definition();
+    int foreign = 0;
+    body refused = {99, NULL, 0};
+    refused.status = answered->echo(&foreign, (const uint8_t *)"x", 1, &refused.bytes, &refused.length);
+    CHECK(refused.status == 1);
+    CHECK(refused.length == strlen("echo refused on purpose"));
+    answered->release(answered->context, refused.bytes);
+}
+
+static void a_definition_release_is_counted(void) {
+    const echo_definition *answered = definition();
+    uint64_t before = answered_number(echo_released, NULL, 0);
+    body echoed = {99, NULL, 0};
+    echoed.status = answered->echo(answered->context, (const uint8_t *)"c", 1, &echoed.bytes, &echoed.length);
+    answered->release(answered->context, echoed.bytes);
+    answered->release(answered->context, NULL);
+    CHECK(answered_number(echo_released, NULL, 0) == before + 2);
+}
+
+static void a_null_definition_answers_null(void) {
+    CHECK(echo_null_definition() == NULL);
+}
+
+static void a_short_definition_answers_a_size_below_eight(void) {
+    const uint32_t *size = (const uint32_t *)echo_short_definition();
+    CHECK(size != NULL && *size == 4);
+}
+
 int main(void) {
+    a_definition_is_one_static_struct_of_its_own_size();
+    a_definition_echoes_through_its_pointers();
+    a_definition_refuses_a_context_not_its_own();
+    a_definition_release_is_counted();
+    a_null_definition_answers_null();
+    a_short_definition_answers_a_size_below_eight();
     echo_answers_its_input();
     fail_refuses_with_a_text();
     garbage_answers_bytes_that_are_not_text();

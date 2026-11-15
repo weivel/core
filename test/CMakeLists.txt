@@ -36,6 +36,13 @@ set_target_properties(echo PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/shared)
 weivel_test(echo_test echo)
 
+add_executable(echo_unload_test echo_unload_test.c)
+target_link_libraries(echo_unload_test PRIVATE ${CMAKE_DL_LIBS})
+add_dependencies(echo_unload_test echo)
+weivel_strict_warnings(echo_unload_test)
+add_test(NAME echo_unload_test COMMAND echo_unload_test $<TARGET_FILE:echo>)
+set_tests_properties(echo_unload_test PROPERTIES TIMEOUT 60)
+
 add_executable(layouts layouts/layouts.c)
 target_include_directories(layouts PRIVATE ${PROJECT_SOURCE_DIR}/include)
 weivel_strict_warnings(layouts)

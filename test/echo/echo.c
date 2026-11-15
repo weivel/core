@@ -58,3 +58,66 @@ void echo_release(uint8_t *buffer) {
     }
     free(buffer);
 }
+
+static uint64_t *unload_counter = NULL;
+
+static int definition_context;
+
+static int32_t definition_echo(void *context, const uint8_t *input, size_t input_length, uint8_t **output,
+                               size_t *output_length) {
+    if (context != &definition_context) {
+        return echo_fail(input, input_length, output, output_length);
+    }
+    return echo_echo(input, input_length, output, output_length);
+}
+
+static void definition_release(void *context, uint8_t *buffer) {
+    (void)context;
+    echo_release(buffer);
+}
+
+static void definition_count_unloads(void *context, uint64_t *unloads) {
+    (void)context;
+    unload_counter = unloads;
+}
+
+static const echo_definition definition = {
+    sizeof(echo_definition), &definition_context, definition_echo, definition_release, definition_count_unloads};
+
+static const uint32_t short_definition = 4;
+
+const void *echo_service_definition(void) {
+    return &definition;
+}
+
+const void *echo_null_definition(void) {
+    return NULL;
+}
+
+const void *echo_short_definition(void) {
+    return &short_definition;
+}
+
+static void count_unload(void) {
+    if (unload_counter != NULL) {
+        (*unload_counter)++;
+    }
+}
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
+    (void)instance;
+    (void)reserved;
+    if (reason == DLL_PROCESS_DETACH) {
+        count_unload();
+    }
+    return TRUE;
+}
+#else
+__attribute__((destructor)) static void count_unload_on_close(void) {
+    count_unload();
+}
+#endif
