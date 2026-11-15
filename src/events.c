@@ -286,6 +286,12 @@ void weivel_events_deliver_revoked(weivel_events *events, const weivel_revoked_e
     deliver(events, &event);
 }
 
+void weivel_events_deliver_released(weivel_events *events, const weivel_holdings_released_event *released) {
+    weivel_event event = empty_event(WEIVEL_EVENT_HOLDINGS_RELEASED);
+    event.data.released = *released;
+    deliver(events, &event);
+}
+
 _Static_assert(sizeof(weivel_capability_event) <= WEIVEL_EVENT_PAYLOAD_WORDS * sizeof(uint64_t),
                "a capability event must fit the event's payload union");
 

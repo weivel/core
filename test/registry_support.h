@@ -113,6 +113,10 @@ static inline void note(seen *item, const weivel_event *event) {
         note_refusal(item, &event->data.reach.refusal);
         note_subject(item, event->data.reach.subject, event->data.reach.has_fix);
         break;
+    case WEIVEL_EVENT_HOLDINGS_RELEASED:
+        item->plugin = event->data.released.owner;
+        item->implementation = event->data.released.registration;
+        break;
     case WEIVEL_EVENT_DEADLINE:
         item->deadline = event->data.deadline.at;
         item->deadline_set = event->data.deadline.set;

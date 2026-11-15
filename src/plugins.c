@@ -132,6 +132,7 @@ static weivel_plugin *new_plugin(void) {
     weivel_list_init(&plugin->wants);
     weivel_list_init(&plugin->watches);
     weivel_list_init(&plugin->holdings);
+    weivel_list_init(&plugin->revoked_holdings);
     weivel_list_init(&plugin->provisions);
     weivel_list_init(&plugin->capability_watches);
     weivel_list_init(&plugin->capability_holdings);
@@ -357,6 +358,7 @@ void weivel_plugins_init_host(weivel_plugin *host) {
     weivel_list_init(&host->wants);
     weivel_list_init(&host->watches);
     weivel_list_init(&host->holdings);
+    weivel_list_init(&host->revoked_holdings);
     weivel_list_init(&host->provisions);
     weivel_list_init(&host->capability_watches);
     weivel_list_init(&host->capability_holdings);

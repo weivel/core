@@ -17,6 +17,7 @@ weivel_registry *weivel_registry_create(void) {
     }
     weivel_list_init(&registry->all_slots);
     weivel_list_init(&registry->spare_holdings);
+    weivel_list_init(&registry->departed);
     registry->slots = weivel_table_create();
     registry->holdings = weivel_table_create();
     if (registry->slots == NULL || registry->holdings == NULL) {
@@ -74,6 +75,11 @@ void weivel_registry_destroy(weivel_registry *registry) {
         return;
     }
     free_spare_holdings(registry);
+    while (!weivel_list_empty(&registry->departed)) {
+        weivel_link *link = registry->departed.next;
+        weivel_list_remove(link);
+        free_registration(WEIVEL_RECORD_OF(link, weivel_registration, in_departed));
+    }
     if (registry->slots != NULL) {
         while (!weivel_list_empty(&registry->all_slots)) {
             weivel_link *link = registry->all_slots.next;
@@ -241,16 +247,72 @@ static void tell_watchers(weivel_core *core, weivel_registration *registration, 
     }
 }
 
+/** Tells the holder its holding is revoked and keeps the holding, revoked, until its holder releases it. */
+static void revoke_awaiting_release(weivel_core *core, weivel_holding *holding) {
+    weivel_revoked_event revoked = {holding->plugin->handle, holding->registration->handle};
+    weivel_events_deliver_revoked(core->events, &revoked);
+    holding->revoked = true;
+    weivel_list_remove(&holding->by_plugin);
+    weivel_list_append(&holding->plugin->revoked_holdings, &holding->by_plugin);
+    core->registry->holding_count--;
+    core->registry->revoked_holding_count++;
+}
+
+/** Tells the owner of an unregistered registration that nothing holds it any more, and frees it. */
+static void report_released(weivel_core *core, weivel_registration *registration) {
+    weivel_holdings_released_event released = {registration->owner_handle, registration->handle};
+    weivel_events_deliver_released(core->events, &released);
+    core->registry->release_report_count--;
+    free(registration);
+}
+
+/** Ends a revoked holding; the last one of its registration reports the registration released. */
+static void end_revoked_holding(weivel_core *core, weivel_holding *holding) {
+    weivel_registration *registration = holding->registration;
+    weivel_table_remove(core->registry->holdings, &holding->key, sizeof holding->key);
+    weivel_list_remove(&holding->by_registration);
+    weivel_list_remove(&holding->by_plugin);
+    core->registry->revoked_holding_count--;
+    free(holding);
+    if (weivel_list_empty(&registration->holdings)) {
+        weivel_list_remove(&registration->in_departed);
+        report_released(core, registration);
+    }
+}
+
+/** Keeps an unregistered registration awaiting releases until its last holding ends, or reports it now. */
+static void depart(weivel_core *core, weivel_registration *registration) {
+    registration->owner_handle = registration->owner == NULL ? WEIVEL_HOST : registration->owner->handle;
+    registration->owner = NULL;
+    registration->slot = NULL;
+    registration->advertised = NULL;
+    if (weivel_list_empty(&registration->holdings)) {
+        report_released(core, registration);
+    } else {
+        weivel_list_append(&core->registry->departed, &registration->in_departed);
+    }
+}
+
 /** Ends a registration as weivel_registry_unregister does, but keeps its slot, which another is about to fill. */
 static void unregister_in_place(weivel_core *core, weivel_registration *registration) {
     registration->slot->registration = NULL;
     weivel_list_remove(&registration->by_owner);
-    while (!weivel_list_empty(&registration->holdings)) {
-        revoke_holding(core, WEIVEL_RECORD_OF(registration->holdings.next, weivel_holding, by_registration));
+    if (registration->awaits_releases) {
+        for (weivel_link *link = registration->holdings.next; link != &registration->holdings; link = link->next) {
+            revoke_awaiting_release(core, WEIVEL_RECORD_OF(link, weivel_holding, by_registration));
+        }
+    } else {
+        while (!weivel_list_empty(&registration->holdings)) {
+            revoke_holding(core, WEIVEL_RECORD_OF(registration->holdings.next, weivel_holding, by_registration));
+        }
     }
     tell_watchers(core, registration, WEIVEL_CHANGE_UNREGISTERED);
     weivel_handles_release(core->handles, registration->handle, WEIVEL_RECORD_REGISTRATION);
-    free(registration);
+    if (registration->awaits_releases) {
+        depart(core, registration);
+    } else {
+        free(registration);
+    }
 }
 
 void weivel_registry_unregister(weivel_core *core, weivel_registration *registration) {
@@ -293,6 +355,9 @@ void weivel_registry_strip(weivel_core *core, weivel_plugin *plugin) {
     }
     while (!weivel_list_empty(&plugin->holdings)) {
         revoke_holding(core, WEIVEL_RECORD_OF(plugin->holdings.next, weivel_holding, by_plugin));
+    }
+    while (!weivel_list_empty(&plugin->revoked_holdings)) {
+        end_revoked_holding(core, WEIVEL_RECORD_OF(plugin->revoked_holdings.next, weivel_holding, by_plugin));
     }
 }
 
@@ -391,7 +456,8 @@ static const weivel_numbers *advertised_by(const weivel_plugin *owner, const cha
 }
 
 /** A registration of `slot` for `owner`, with its handle, linked nowhere yet; NULL when memory runs out. */
-static weivel_registration *new_registration(weivel_core *core, weivel_plugin *owner, weivel_slot *slot) {
+static weivel_registration *new_registration(weivel_core *core, weivel_plugin *owner, weivel_slot *slot,
+                                             bool awaits_releases) {
     weivel_registration *registration = weivel_memory_allocate_zeroed(1, sizeof *registration);
     if (registration == NULL) {
         return NULL;
@@ -404,8 +470,10 @@ static weivel_registration *new_registration(weivel_core *core, weivel_plugin *o
     registration->slot = slot;
     registration->owner = owner;
     registration->advertised = advertised_by(owner, slot->id);
+    registration->awaits_releases = awaits_releases;
     weivel_list_init(&registration->holdings);
     weivel_list_init(&registration->by_owner);
+    weivel_list_init(&registration->in_departed);
     return registration;
 }
 
@@ -427,14 +495,31 @@ static weivel_status prepare_arrival(weivel_core *core, weivel_slot *slot, const
     return status;
 }
 
+/** Reserves the release report a registration awaiting releases owes its owner, before anything changes. */
+static weivel_status reserve_release_report(weivel_core *core, const weivel_registration *registration) {
+    return registration->awaits_releases ? weivel_events_reserve(core->events, 1) : WEIVEL_STATUS_OK;
+}
+
+static void unreserve_release_report(weivel_core *core, const weivel_registration *registration) {
+    if (registration->awaits_releases) {
+        weivel_events_unreserve(core->events, 1);
+    }
+}
+
 static weivel_status register_in_slot(weivel_core *core, weivel_plugin *owner, weivel_slot *slot,
-                                      weivel_handle *handle) {
+                                      bool awaits_releases, weivel_handle *handle) {
     weivel_registration *replaced = slot->registration;
-    weivel_registration *registration = new_registration(core, owner, slot);
+    weivel_registration *registration = new_registration(core, owner, slot, awaits_releases);
     if (registration == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_status status = prepare_arrival(core, slot, registration, replaced != NULL);
+    weivel_status status = reserve_release_report(core, registration);
+    if (status == WEIVEL_STATUS_OK) {
+        status = prepare_arrival(core, slot, registration, replaced != NULL);
+        if (status != WEIVEL_STATUS_OK) {
+            unreserve_release_report(core, registration);
+        }
+    }
     if (status != WEIVEL_STATUS_OK) {
         weivel_handles_unissue(core->handles, registration->handle, WEIVEL_RECORD_REGISTRATION);
         free(registration);
@@ -447,18 +532,22 @@ static weivel_status register_in_slot(weivel_core *core, weivel_plugin *owner, w
         weivel_list_append(&owner->registrations, &registration->by_owner);
     }
     slot->registration = registration;
+    if (awaits_releases) {
+        core->registry->release_report_count++;
+    }
     *handle = registration->handle;
     weivel_waiting_arrival(core, slot);
     tell_watchers(core, registration, WEIVEL_CHANGE_REGISTERED);
     return WEIVEL_STATUS_OK;
 }
 
-static weivel_status register_for_host(weivel_core *core, const char *id, weivel_handle *handle) {
+static weivel_status register_for_host(weivel_core *core, const char *id, bool awaits_releases,
+                                       weivel_handle *handle) {
     weivel_slot *slot = weivel_registry_slot(core->registry, id);
     if (slot == NULL) {
         return WEIVEL_STATUS_OUT_OF_MEMORY;
     }
-    weivel_status status = register_in_slot(core, NULL, slot, handle);
+    weivel_status status = register_in_slot(core, NULL, slot, awaits_releases, handle);
     if (status != WEIVEL_STATUS_OK) {
         weivel_registry_release_slot(core->registry, slot);
     }
@@ -466,7 +555,7 @@ static weivel_status register_for_host(weivel_core *core, const char *id, weivel
 }
 
 static weivel_status register_for_plugin(weivel_core *core, weivel_handle owner, const char *id,
-                                         weivel_handle *handle) {
+                                         bool awaits_releases, weivel_handle *handle) {
     weivel_plugin *plugin;
     weivel_status status = weivel_core_opened_plugin(core, owner, &plugin);
     if (status != WEIVEL_STATUS_OK) {
@@ -490,7 +579,7 @@ static weivel_status register_for_plugin(weivel_core *core, weivel_handle owner,
     bool noted;
     status = weivel_ledger_note(plugin, WEIVEL_RELATIONSHIP_SERVICE_PROVIDED, id, &noted);
     if (status == WEIVEL_STATUS_OK) {
-        status = register_in_slot(core, plugin, slot, handle);
+        status = register_in_slot(core, plugin, slot, awaits_releases, handle);
     }
     if (status != WEIVEL_STATUS_OK) {
         weivel_ledger_unnote(plugin, WEIVEL_RELATIONSHIP_SERVICE_PROVIDED, noted);
@@ -503,8 +592,8 @@ static bool is_id(const char *id) {
     return id != NULL && id[0] != '\0';
 }
 
-weivel_status weivel_register_service(weivel_core *core, weivel_handle owner, const char *id,
-                                      weivel_handle *registration, uint32_t *pending_events) {
+static weivel_status register_call(weivel_core *core, weivel_handle owner, const char *id, bool awaits_releases,
+                                   weivel_handle *registration, uint32_t *pending_events) {
     if (core == NULL) {
         return WEIVEL_STATUS_MALFORMED;
     }
@@ -512,16 +601,66 @@ weivel_status weivel_register_service(weivel_core *core, weivel_handle owner, co
     weivel_status status;
     if (registration == NULL || !is_id(id)) {
         status = weivel_core_refuse_malformed(
-            core, "weivel_register_service was given no service id, or no place to write the registration",
+            core,
+            awaits_releases ? "weivel_register_service_awaiting_releases was given no service id, or no place to "
+                              "write the registration"
+                            : "weivel_register_service was given no service id, or no place to write the registration",
             "pass a non-empty service id and a pointer to a weivel_handle");
         if (registration != NULL) {
             *registration = 0;
         }
     } else {
         *registration = 0;
-        status = owner == WEIVEL_HOST ? register_for_host(core, id, registration)
-                                      : register_for_plugin(core, owner, id, registration);
+        status = owner == WEIVEL_HOST ? register_for_host(core, id, awaits_releases, registration)
+                                      : register_for_plugin(core, owner, id, awaits_releases, registration);
     }
+    weivel_core_end_call(core, pending_events);
+    weivel_mutex_unlock(core->mutex);
+    return status;
+}
+
+weivel_status weivel_register_service(weivel_core *core, weivel_handle owner, const char *id,
+                                      weivel_handle *registration, uint32_t *pending_events) {
+    return register_call(core, owner, id, false, registration, pending_events);
+}
+
+weivel_status weivel_register_service_awaiting_releases(weivel_core *core, weivel_handle owner, const char *id,
+                                                        weivel_handle *registration, uint32_t *pending_events) {
+    return register_call(core, owner, id, true, registration, pending_events);
+}
+
+static weivel_status refuse_no_revoked_holding(weivel_core *core, weivel_handle holder, weivel_handle registration) {
+    char detail[192];
+    snprintf(detail, sizeof detail,
+             "%" PRIu64 " holds no revoked holding of the registration %" PRIu64 " awaiting its release", holder,
+             registration);
+    weivel_status status = weivel_events_push_refusal(
+        core->events, WEIVEL_REFUSAL_STALE_HANDLE, NULL, detail,
+        "release a holding only once its registration, made by weivel_register_service_awaiting_releases, was "
+        "revoked to the holder, and only once");
+    return status == WEIVEL_STATUS_OK ? WEIVEL_STATUS_REFUSED : status;
+}
+
+static weivel_status release_holding(weivel_core *core, weivel_handle holder, weivel_handle registration) {
+    weivel_holding_key key;
+    memset(&key, 0, sizeof key);
+    key.registration = registration;
+    key.plugin = holder;
+    weivel_holding *holding = weivel_table_find(core->registry->holdings, &key, sizeof key);
+    if (holding == NULL || !holding->revoked) {
+        return refuse_no_revoked_holding(core, holder, registration);
+    }
+    end_revoked_holding(core, holding);
+    return WEIVEL_STATUS_OK;
+}
+
+weivel_status weivel_release_holding(weivel_core *core, weivel_handle holder, weivel_handle registration,
+                                     uint32_t *pending_events) {
+    if (core == NULL) {
+        return WEIVEL_STATUS_MALFORMED;
+    }
+    weivel_mutex_lock(core->mutex);
+    weivel_status status = release_holding(core, holder, registration);
     weivel_core_end_call(core, pending_events);
     weivel_mutex_unlock(core->mutex);
     return status;

@@ -32,6 +32,15 @@ typedef struct weivel_registration {
     const weivel_numbers *advertised;
     weivel_link by_owner;
     weivel_link holdings;
+    /**
+     * Whether weivel_register_service_awaiting_releases made it, so it holds a reservation for the owner's
+     * WEIVEL_EVENT_HOLDINGS_RELEASED and, once unregistered, outlives its slot until its last holding ends.
+     */
+    bool awaits_releases;
+    /** The owner's handle, kept once unregistered, when `owner` and `slot` are NULL. */
+    weivel_handle owner_handle;
+    /** Its place among the registrations unregistered and still held. */
+    weivel_link in_departed;
 } weivel_registration;
 
 typedef struct weivel_holding_key {
@@ -45,7 +54,10 @@ typedef struct weivel_holding {
     weivel_registration *registration;
     weivel_plugin *plugin;
     weivel_link by_registration;
+    /** In the plugin's `holdings`, or its `revoked_holdings` once `revoked`. */
     weivel_link by_plugin;
+    /** Revoked by an unregistration and awaiting weivel_release_holding; its revocation is already delivered. */
+    bool revoked;
 } weivel_holding;
 
 struct weivel_constrained;
@@ -80,7 +92,13 @@ typedef struct weivel_registry {
     /** From a weivel_holding_key to its holding, so holding a service twice is found without a scan. */
     weivel_table *holdings;
     uint32_t slot_count;
+    /** The holdings not revoked, each holding the reservation of its revocation. */
     uint32_t holding_count;
+    uint32_t revoked_holding_count;
+    /** Registrations awaiting releases, unregistered or not, each holding the reservation of its event. */
+    uint32_t release_report_count;
+    /** Registrations awaiting releases that were unregistered while held, by `in_departed`. */
+    weivel_link departed;
     /** The sequence the next reported refusal takes, ordering reports across plugins. */
     uint64_t next_report;
     /** The last request a capacity question was given; each question takes the next, so none repeats. */

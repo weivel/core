@@ -63,6 +63,9 @@ static void print_event_layouts(void) {
     FIELD(weivel_revoked_event, plugin);
     FIELD(weivel_revoked_event, implementation);
     SIZE(weivel_revoked_event);
+    FIELD(weivel_holdings_released_event, owner);
+    FIELD(weivel_holdings_released_event, registration);
+    SIZE(weivel_holdings_released_event);
     FIELD(weivel_reach_refusal, kind);
     FIELD(weivel_reach_refusal, plugin);
     FIELD(weivel_reach_refusal, id);
@@ -111,6 +114,7 @@ static void print_event_layouts(void) {
     FIELD(weivel_event, data.capability);
     FIELD(weivel_event, data.refused);
     FIELD(weivel_event, data.deadline);
+    FIELD(weivel_event, data.released);
     FIELD(weivel_event, data.reserved);
     SIZE(weivel_event);
 }

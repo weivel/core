@@ -71,6 +71,8 @@ typedef struct weivel_plugin {
     weivel_link wants;
     weivel_link watches;
     weivel_link holdings;
+    /** Its holdings of registrations unregistered since, each awaiting weivel_release_holding. */
+    weivel_link revoked_holdings;
     /** The capability ids it may reach, consumed or provided, each mapped to itself, pointing into `manifest`. */
     weivel_table *capabilities_reachable;
     /** The capability ids its manifest provides, each mapped to itself, pointing into `manifest`. */
