@@ -55,6 +55,35 @@ ECHO_API int32_t echo_released(const uint8_t *input, size_t input_length, uint8_
 /** Frees a body any call answered; NULL is a no-op. */
 ECHO_API void echo_release(uint8_t *buffer);
 
+/**
+ * The struct a definition-kind service answers: its `size`, then its operations, each taking `context` first.
+ * Fields are only ever appended.
+ */
+typedef struct echo_definition {
+    uint32_t size;
+    void *context;
+    /** As echo_echo, but answers 1 and a text saying so when handed any context but the definition's own. */
+    int32_t (*echo)(void *context, const uint8_t *input, size_t input_length, uint8_t **output,
+                    size_t *output_length);
+    /** As echo_release, and counted by echo_released alike. */
+    void (*release)(void *context, uint8_t *buffer);
+    /**
+     * Hands the library a counter it adds one to when its binary is closed; NULL stops counting. A binary keeps
+     * nothing once closed, so the count lives in the caller's memory, which must outlive the binary (process exit
+     * closes it too), and a binary loaded again counts nothing until it is handed a counter.
+     */
+    void (*count_unloads)(void *context, uint64_t *unloads);
+} echo_definition;
+
+/** Answers one static echo_definition, the same on every call, living until the library is unloaded. */
+ECHO_API const void *echo_service_definition(void);
+
+/** A definition that answers NULL, so a host can prove it refuses the load. */
+ECHO_API const void *echo_null_definition(void);
+
+/** A definition whose struct's `size` is 4, below a size and one pointer, so a host can prove it refuses the load. */
+ECHO_API const void *echo_short_definition(void);
+
 #ifdef __cplusplus
 }
 #endif
