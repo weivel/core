@@ -111,8 +111,11 @@ capabilities, watches and wants, and what each plugin holds of another's.
   want, a released or forgotten plugin. Making it cannot fail once the core has answered: the layer takes the room it
   needs before the call, so the core never holds an object whose handle the table lacks.
 - A holding is the object a plugin was handed for another's registration or implementation, kept by the pair of the
-  plugin's handle and that handle. A `WEIVEL_EVENT_REVOKED` names the pair and drops that holding. Its `plugin` may
-  name a forgotten plugin, and is then only half of a key and never used as a handle to call with.
+  plugin's handle and that handle, a watch hearing a registration included. A `WEIVEL_EVENT_REVOKED` names the pair,
+  and the layer drops its own entry for it. For a registration made with `weivel_register_service_awaiting_releases`
+  the core keeps its holding past the revocation, and the layer ends it with `weivel_release_holding` once the
+  language's owner of the object has let go of it, whichever way the plugin came to hold it. Its `plugin` may name a
+  forgotten plugin, and is then only half of a key and never used as a handle to call with.
 - A handle the table does not hold answers nothing. It is never matched to a newer object, because the core never
   reissues a handle while its object lives and refuses a stale one as data.
 - A plugin may be opened with the layer's own token as its payload (`weivel_open_plugin`), so the layer reaches its
@@ -196,7 +199,10 @@ as its forget, so no call that passed the check reaches the core after the forge
   implementations of one, and watches them join and leave. An implementation reaches consumers only once its
   provider's activation is verified.
 - **Events.** A plugin hears what the core reports about it: a service or implementation revoked, so it must stop
-  using it; a refusal of reach; a constrained want that settled degraded.
+  using it; a refusal of reach; a constrained want that settled degraded; and, for a service it registered with
+  `weivel_register_service_awaiting_releases`, its `WEIVEL_EVENT_HOLDINGS_RELEASED`, which the layer drains as any
+  event and hands to the plugin that owns the registration, telling it nothing holds what it registered any more, so
+  whatever stood behind it may be freed. An owner released or forgotten since hears nothing, and the layer drops it.
 - **Log.** A plugin's log is the host's to direct. The core's own log events go to the host's log at their level.
 - **Manifest.** The plugin's manifest value, as the host registered it.
 - **Listeners never reach a caller.** A listener that fails is reported to the error sink, and every other listener
@@ -375,8 +381,9 @@ function, and a service that declares a definition as that definition.
 - At load the host resolves a definition's symbol, calls it once and registers the pointer it answered as the
   service's object, with `weivel_register_service_awaiting_releases`: in C the pointer itself, and in any other
   language an object carrying that native address. It adds no wrapper, count or copy, so a consumer's call through a
-  definition is a plain native call. A definition that answers NULL, or a struct whose `size` is below 8 (the `size`
-  and one pointer), refuses the load as the caller's mistake, undone as a load that fails partway.
+  definition is a plain native call. A definition that answers NULL, or a struct whose `size` is below
+  `2 * sizeof(void *)` (the `size` and one pointer under the platform's alignment: 8 on 32-bit, 16 on 64-bit),
+  refuses the load as the caller's mistake, undone as a load that fails partway.
 - Unloading unregisters every service of the library at once. A call made after it through a bytes object a consumer
   still holds is refused. A definition is called directly, so no call to it can be refused: its unregistration
   revokes every holding of it, each holder told by a `WEIVEL_EVENT_REVOKED`, and the core keeps each holding until it
