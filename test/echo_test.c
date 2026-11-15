@@ -120,6 +120,24 @@ static void a_definition_release_is_counted(void) {
     CHECK(answered_number(echo_released, NULL, 0) == before + 2);
 }
 
+static void another_definition_is_a_struct_of_its_own_that_echoes(void) {
+    const echo_definition *other = (const echo_definition *)echo_other_service_definition();
+    body echoed = {99, NULL, 0};
+    CHECK(other != NULL && other != definition());
+    CHECK(other == echo_other_service_definition());
+    CHECK(other->size == sizeof(echo_definition));
+    echoed.status = other->echo(other->context, (const uint8_t *)"other", 5, &echoed.bytes, &echoed.length);
+    CHECK(echoed.status == 0 && echoed.length == 5 && memcmp(echoed.bytes, "other", 5) == 0);
+    other->release(other->context, echoed.bytes);
+}
+
+static void a_floor_definition_answers_exactly_a_size_and_one_pointer(void) {
+    const echo_floor *floor = (const echo_floor *)echo_floor_definition();
+    size_t laid_out = sizeof(echo_floor);
+    CHECK(laid_out == 2 * sizeof(void *));
+    CHECK(floor != NULL && floor->size == 2 * sizeof(void *));
+}
+
 static void a_null_definition_answers_null(void) {
     CHECK(echo_null_definition() == NULL);
 }
@@ -135,6 +153,8 @@ int main(void) {
     a_definition_echoes_through_its_pointers();
     a_definition_refuses_a_context_not_its_own();
     a_definition_release_is_counted();
+    another_definition_is_a_struct_of_its_own_that_echoes();
+    a_floor_definition_answers_exactly_a_size_and_one_pointer();
     a_null_definition_answers_null();
     a_one_byte_short_definition_answers_one_byte_below_a_size_and_one_pointer();
     echo_answers_its_input();
