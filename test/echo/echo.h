@@ -81,7 +81,10 @@ ECHO_API const void *echo_service_definition(void);
 /** A definition that answers NULL, so a host can prove it refuses the load. */
 ECHO_API const void *echo_null_definition(void);
 
-/** A definition whose struct's `size` is 4, below a size and one pointer, so a host can prove it refuses the load. */
+/**
+ * A definition whose struct's `size` is 4, below `2 * sizeof(void *)` on every platform, so a host can prove it
+ * refuses the load.
+ */
 ECHO_API const void *echo_short_definition(void);
 
 #ifdef __cplusplus
