@@ -240,8 +240,9 @@ provided by the host, and its object is answered as any provider's is.
    returns: an entry that loads its plugin's code later may run that code in whatever order the loads finish. Where
    no dispatch runs, the activating thread starts the plan as the dispatcher, so what an activate's own calls queue is
    dispatched once every activate of the plan has been called; where one runs, the plan is started as a call made
-   while that dispatch runs, and those events join the end of its queue. Either way an activate that settles before
-   it returns is verified, and quarantined if the core refuses, before the next plugin is started;
+   while that dispatch runs, and those events join the end of its queue. Either way an activate that settles, as
+   the language can observe it, before it returns is verified, and quarantined if the core refuses, before the
+   next plugin is started;
 2. never waits for one plugin's activate to finish before starting the next, because a plugin whose activate waits on
    a service a later plugin registers would otherwise hold back every plugin behind it for good;
 3. as each activate settles, quarantines the plugin when it failed, with a reason saying so and a fix, and otherwise
@@ -267,7 +268,8 @@ release steps that still apply (its activate was never called, so no deactivate 
 once they have run, so no plugin stays open in the core until destroy without an outcome. The activation goes on to
 the next plugin, so the caller still receives the plan and every other outcome and no started plugin is left running
 without one. An outcome carries the refusal that decided it: a `refused` outcome the core's refusal of the open, and a
-`quarantined` outcome the core's refusal of the verification when that refusal is what quarantined the plugin.
+`quarantined` outcome the core's refusal of the verification when that refusal is what quarantined the plugin,
+and a quarantine for a reason of the host's carries none.
 
 A plugin is opened once while it stays open. An open, or an activation, of a plugin the host holds open, or whose
 activate is in flight, is refused by the core before the host builds anything for it, its outcome `refused`, and the
