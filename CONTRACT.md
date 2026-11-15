@@ -36,7 +36,12 @@ capacity answer, an unload or a call the timer makes can each throw or fail. The
 error sink the host's caller may replace, and carries on. It never surfaces as the failure of the call whose drain set
 it off: a caller handed an error in place of the registration or plugin it asked for could never release it, and a
 drain driven by a timer would end the process. A sink that itself fails is reported to the language's standard error
-output.
+output. The one exception, here and wherever else this document keeps a failure from a caller, is a fatal runtime
+error, one after which the runtime itself cannot be trusted to go on, such as Java's `VirtualMachineError`: the layer
+restores its own state and then lets it propagate.
+
+**A text that cannot cross a C boundary whole is the caller's mistake.** A text the caller hands with an embedded NUL
+is refused before the core is called, answered to the caller and reported to no sink.
 
 **Events are dispatched in the core's order, outside the core, and the dispatcher is never re-entered.** The wrapper
 drains a call's events completely before it dispatches any of them, and dispatches them first in, first out. A call
@@ -79,6 +84,8 @@ Loads the core's binary and owns the one wrapper every call goes through.
   that carries a structure the layer's caller built and the layer handed on unchanged, a manifest value, the core's
   options or an edge source among them, is the caller's mistake: it is answered to the caller with the core's refusal
   and reported to no sink.
+- An id is the caller's value. A layer may refuse a malformed one before it calls the core, or hand it on and answer
+  the core's refusal; either way it is the caller's mistake, answered to the caller and reported to no sink.
 - A call and its drain are one step against every other call: the events drained after a call are that call's, and
   no other thread's call may land between them. A language with several threads either holds one layer lock across
   the call and its drain, or makes every call on one owning thread that others hand their calls to. No two threads
@@ -138,6 +145,8 @@ Arms the core's next deadline on the language's own timer.
   not taken its turn, the process was suspended or the deadline and other work fall due at the same moment, the
   wrapper advances the core first. So a registration at or after a want's deadline settles nothing.
 - With no deadline there is no timer, so a want that asked for no timeout waits for as long as it takes.
+- A host its caller gives no scheduler either arms the language's own timer or arms none, and a host that arms none
+  answers a want that needs the time as the caller's mistake. Each language states which in its own `CONTENT.md`.
 - It may not keep a list of the calls that move a deadline, poll the core for its deadline, or advance the core on a
   time of its own reckoning.
 
@@ -167,7 +176,8 @@ as its forget, so no call that passed the check reaches the core after the forge
   - A want settles once, when the core settles it: with the provider's object, or refused with the core's refusal, its
     code, subject and fix intact. A want waits without bound unless the plugin asks for a timeout, and a constrained
     want takes its budget and its poll interval from the plugin, every one of them handed to the core unchanged. A
-    want the core rejects because its plugin stopped is rejected to the plugin, which still hears it.
+    want the core rejects because its plugin stopped is rejected to the plugin, which still hears it. A plugin may
+    withdraw a want that has not settled, and its result is then never delivered.
   - A watch hears every later registration and unregistration the core reports for the id, the object on the one and
     nothing on the other, until the plugin stops watching.
   - A registration lasts until the plugin unregisters it or stops.
@@ -209,7 +219,16 @@ registers.
 
 **A plugin's entry**, in abstract, offers an activate that takes the plugin's context and may finish later, and
 optionally a deactivate, which may finish later too. Each language names its concrete form in its own repository and
-in nowhere else.
+in nowhere else. An activate may run as the dispatcher, so it must not block on an event another thread causes: one
+that must wait for such an event answers a result that comes later. A layer loads a plugin's code by a name its caller
+gives, and a language's module convention is not a default the layer may assume.
+
+**The ledger and the timer.** The host answers its caller the core's ledger, every plugin's row as the core keeps it,
+and lets its caller see each move of its timer, the deadline it arms or that it disarms: the ledger is what the layer
+vectors read a plugin's state and its quarantine reason from, and the timer's moves are what the `want` vectors record.
+It hands its caller nothing of the wrapper's dispatch, clock or deadline hooks, so nothing but the layer drains the
+core or moves its timer. A language with no way to hide a type its own modules share keeps that type public and
+documents it as unsafe for a caller, as Java 8 must, having no module system.
 
 **Host services.** The host registers a service of its own under `WEIVEL_HOST`, offered to the activation plan as
 provided by the host, and its object is answered as any provider's is.
@@ -218,7 +237,11 @@ provided by the host, and its object is answered as any provider's is.
 
 1. starts each plugin of the plan's order in that order: builds its context no later than it opens it, opens it and
    calls its activate. Plan order binds the call to each entry's activate and nothing the entry does after that call
-   returns: an entry that loads its plugin's code later may run that code in whatever order the loads finish;
+   returns: an entry that loads its plugin's code later may run that code in whatever order the loads finish. Where
+   no dispatch runs, the activating thread starts the plan as the dispatcher, so what an activate's own calls queue is
+   dispatched once every activate of the plan has been called; where one runs, the plan is started as a call made
+   while that dispatch runs, and those events join the end of its queue. Either way an activate that settles before
+   it returns is verified, and quarantined if the core refuses, before the next plugin is started;
 2. never waits for one plugin's activate to finish before starting the next, because a plugin whose activate waits on
    a service a later plugin registers would otherwise hold back every plugin behind it for good;
 3. as each activate settles, quarantines the plugin when it failed, with a reason saying so and a fix, and otherwise
@@ -232,6 +255,8 @@ provided by the host, and its object is answered as any provider's is.
    caller registers, or an outcome the caller reads back). A host whose activation blocked until every activate
    settled would never return while an activate waits on a want nothing provides, and so could never be destroyed.
 
+A plan the core refuses is answered to the caller as that refusal, as a value, and never thrown.
+
 An outcome is one of five: `active`, `quarantined`, `refused` when the core refused to open the plugin, `released`
 for a plugin released while its activate was in flight, answered when that release begins, so every outcome arrives
 even for an activate that never settles, or for one the destroy kept from its activate (see Destroy), and `failed` for
@@ -241,7 +266,8 @@ core at all, so that the core holds the plugin open, the layer releases and forg
 release steps that still apply (its activate was never called, so no deactivate is owed), and answers the outcome
 once they have run, so no plugin stays open in the core until destroy without an outcome. The activation goes on to
 the next plugin, so the caller still receives the plan and every other outcome and no started plugin is left running
-without one.
+without one. An outcome carries the refusal that decided it: a `refused` outcome the core's refusal of the open, and a
+`quarantined` outcome the core's refusal of the verification when that refusal is what quarantined the plugin.
 
 A plugin is opened once while it stays open. An open, or an activation, of a plugin the host holds open, or whose
 activate is in flight, is refused by the core before the host builds anything for it, its outcome `refused`, and the
@@ -329,8 +355,8 @@ none. It binds each declared function of the standard's bytes kind (`WEIVEL_STAN
 standard's `library.h`), and registers each declared service under `WEIVEL_HOST` as an object with one function per
 declared function.
 
-- The input crosses borrowed: the layer passes the language's bytes for the length of the call and never copies them
-  where the language can lend its memory.
+- The input crosses for the length of the call only: memory the language can lend without holding off its collector
+  is lent, and memory the collector may move is copied once.
 - The output is the library's, freed only by the library's declared release symbol, and bytes are never answered
   after their release. One of two things happens: either the layer copies the bytes once into the language's own
   memory and then releases them before the call answers, which a garbage-collected language must do; or the layer
@@ -354,7 +380,8 @@ declared function.
   but it never loads or calls the standard's binary.
 
 **It may not** read a file, a manifest format or the environment on its own account; those are the standard's
-defaults, or the caller's.
+defaults, or the caller's. A default path to a binary inside the language's own package, as a TypeScript package
+carries the core's and the standard's, is permitted, since it forces nothing on a caller who passes a path.
 
 ## `standard` (optional)
 
