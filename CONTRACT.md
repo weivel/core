@@ -373,19 +373,20 @@ function, and a service that declares a definition as that definition.
   declares it as its one function, and a library whose services are all definitions needs no release symbol, since
   each definition carries its own release.
 - At load the host resolves a definition's symbol, calls it once and registers the pointer it answered as the
-  service's object: in C the pointer itself, and in any other language an object carrying that native address. It
-  adds no wrapper, count or copy, so a consumer's call through a definition is a plain native call. A definition that
-  answers NULL, or a struct whose `size` is below 8 (the `size` and one pointer), refuses the load as the caller's
-  mistake, undone as a load that fails partway.
+  service's object, with `weivel_register_service_awaiting_releases`: in C the pointer itself, and in any other
+  language an object carrying that native address. It adds no wrapper, count or copy, so a consumer's call through a
+  definition is a plain native call. A definition that answers NULL, or a struct whose `size` is below 8 (the `size`
+  and one pointer), refuses the load as the caller's mistake, undone as a load that fails partway.
 - Unloading unregisters every service of the library at once. A call made after it through a bytes object a consumer
   still holds is refused. A definition is called directly, so no call to it can be refused: its unregistration
-  revokes every holding of it and tells each holder through the core's revocation, and a holder stops calling on
-  that revocation and releases every answer, refusal and handle the definition gave it before it releases the holding
-  itself. A call made after the holder released its holding is the holder's defect and is undefined, as any use of
-  memory after its free is.
-- The library's binary is closed only once every holding of every one of its definition services has been released,
-  no call into a bytes function of it is running and no bytes it answered are held, whichever ends last. A holder
-  that never releases keeps the binary open until the host is freed.
+  revokes every holding of it, each holder told by a `WEIVEL_EVENT_REVOKED`, and the core keeps each holding until it
+  is released. A holder stops calling on that revocation, releases every answer, refusal and handle the definition
+  gave it, and then releases the holding itself with `weivel_release_holding`; a holder the host releases,
+  quarantines or forgets has its holding ended by the core. A call made after the holder released its holding is the
+  holder's defect and is undefined, as any use of memory after its free is.
+- The library's binary is closed only once the core has queued a `WEIVEL_EVENT_HOLDINGS_RELEASED` for every one of
+  its definition services, no call into a bytes function of it is running and no bytes it answered are held,
+  whichever ends last. A holder that never releases keeps the binary open until the host is freed.
 - A load that fails partway, as when the core refuses one of its registrations, is undone as an unload: what it
   registered is unregistered, and its binary is closed once nothing of it can run.
 - A load is refused as the caller's mistake, answered to the caller and reported to no sink, when an id it declares
