@@ -84,10 +84,23 @@ static void definition_count_unloads(void *context, uint64_t *unloads) {
 static const echo_definition definition = {
     sizeof(echo_definition), &definition_context, definition_echo, definition_release, definition_count_unloads};
 
+static const echo_definition other_definition = {
+    sizeof(echo_definition), &definition_context, definition_echo, definition_release, definition_count_unloads};
+
+static const echo_floor floor_definition = {(uint32_t)(2 * sizeof(void *)), &definition_context};
+
 static const uint32_t one_byte_short_definition = (uint32_t)(2 * sizeof(void *) - 1);
 
 const void *echo_service_definition(void) {
     return &definition;
+}
+
+const void *echo_other_service_definition(void) {
+    return &other_definition;
+}
+
+const void *echo_floor_definition(void) {
+    return &floor_definition;
 }
 
 const void *echo_null_definition(void) {

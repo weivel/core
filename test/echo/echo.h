@@ -78,6 +78,25 @@ typedef struct echo_definition {
 /** Answers one static echo_definition, the same on every call, living until the library is unloaded. */
 ECHO_API const void *echo_service_definition(void);
 
+/**
+ * A second echo_definition, a struct of its own beside echo_service_definition's with the same operations and
+ * context, so a library can declare two definition services and a host can prove it closes the binary only once both
+ * are released.
+ */
+ECHO_API const void *echo_other_service_definition(void);
+
+/**
+ * The struct echo_floor_definition answers: its `size`, then one pointer, so it is exactly `2 * sizeof(void *)` under
+ * the platform's alignment, the smallest struct a host loads. It has no operation.
+ */
+typedef struct echo_floor {
+    uint32_t size;
+    void *context;
+} echo_floor;
+
+/** A definition whose `size` is exactly `2 * sizeof(void *)`, so a host can prove it loads one at the floor. */
+ECHO_API const void *echo_floor_definition(void);
+
 /** A definition that answers NULL, so a host can prove it refuses the load. */
 ECHO_API const void *echo_null_definition(void);
 
