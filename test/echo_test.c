@@ -124,9 +124,10 @@ static void a_null_definition_answers_null(void) {
     CHECK(echo_null_definition() == NULL);
 }
 
-static void a_short_definition_answers_a_size_below_a_size_and_one_pointer(void) {
-    const uint32_t *size = (const uint32_t *)echo_short_definition();
-    CHECK(size != NULL && *size == 4 && *size < 2 * sizeof(void *));
+static void a_one_byte_short_definition_answers_one_byte_below_a_size_and_one_pointer(void) {
+    const uint32_t *size = (const uint32_t *)echo_one_byte_short_definition();
+    CHECK(size != NULL && *size + 1 == 2 * sizeof(void *));
+    CHECK(sizeof(void *) < 8 || *size > 8);
 }
 
 int main(void) {
@@ -135,7 +136,7 @@ int main(void) {
     a_definition_refuses_a_context_not_its_own();
     a_definition_release_is_counted();
     a_null_definition_answers_null();
-    a_short_definition_answers_a_size_below_a_size_and_one_pointer();
+    a_one_byte_short_definition_answers_one_byte_below_a_size_and_one_pointer();
     echo_answers_its_input();
     fail_refuses_with_a_text();
     garbage_answers_bytes_that_are_not_text();

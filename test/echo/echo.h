@@ -82,10 +82,10 @@ ECHO_API const void *echo_service_definition(void);
 ECHO_API const void *echo_null_definition(void);
 
 /**
- * A definition whose struct's `size` is 4, below `2 * sizeof(void *)` on every platform, so a host can prove it
- * refuses the load.
+ * A definition whose struct's `size` is `2 * sizeof(void *) - 1`, one byte below the floor, so a host can prove it
+ * refuses the load at the floor of its own platform and not at 8, which is the floor of a 32-bit one only.
  */
-ECHO_API const void *echo_short_definition(void);
+ECHO_API const void *echo_one_byte_short_definition(void);
 
 #ifdef __cplusplus
 }
