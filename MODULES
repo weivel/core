@@ -6,3 +6,5 @@ host
 standard optional
 conformance
 benchmarks
+program optional
+bundle optional
