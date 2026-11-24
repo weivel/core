@@ -2,5 +2,6 @@ The core is weivel's plugin engine, written in C: the one place the plugin platf
 
 - [abi.md](abi.md) - the conventions every call keeps: who owns what crosses the boundary, threads, events and time, and sizes
 - [ledger.md](ledger.md) - what the ledger answers about every plugin registered and not forgotten
+- [plan.md](plan.md) - the activation plan: the order a set of plugins starts in, the edges it draws, its cycles and its refusals
 - [contract/](contract/) - the contract a language implementation follows: the rules every module keeps and one file per module
 - [source/](source/) - the source mirror: one doc per source folder that holds code, and at its root how to build and test the core

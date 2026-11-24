@@ -26,7 +26,8 @@ documents it as unsafe for a caller, as Java 8 must, having no module system.
 **Host services.** The host registers a service of its own under `WEIVEL_HOST`, offered to the activation plan as
 provided by the host, and its object is answered as any provider's is.
 
-**Activation.** Given plugins and the edge source its caller chooses, the host asks the core for the plan, then:
+**Activation.** Given plugins and the edge source its caller chooses, the host asks the core for
+[the plan](../plan.md), then:
 
 1. starts each plugin of the plan's order in that order: builds its context no later than it opens it, opens it and
    calls its activate. Plan order binds the call to each entry's activate and nothing the entry does after that call
@@ -49,7 +50,8 @@ provided by the host, and its object is answered as any provider's is.
    caller registers, or an outcome the caller reads back). A host whose activation blocked until every activate
    settled would never return while an activate waits on a want nothing provides, and so could never be destroyed.
 
-A plan the core refuses is answered to the caller as that refusal, as a value, and never thrown.
+A plan the core refuses is answered to the caller as that refusal, as a value, and never thrown. A plan with cycles is
+not a refusal: it is answered to the caller with its cycles, and only a malformed call is refused.
 
 An outcome is one of five: `active`, `quarantined`, `refused` when the core refused to open the plugin, `released`
 for a plugin released while its activate was in flight, answered when that release begins, so every outcome arrives
