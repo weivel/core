@@ -1,0 +1,5 @@
+The core's whole interface: one C header, readable from C and C++, that declares every type, constant and call a caller of the core may use, and nothing else of the core's. It is the core's documentation of each call, beside its declaration: what it takes, what it answers, what it queues and from which thread it may be made; the conventions every call shares are explained in [the conventions of the ABI](../../../abi.md). It holds no function pointer and no callback type, which is the shape of "the core never calls out", and the kit's core gate reads the preprocessed header to prove it. Two tests hold the header to what a language relies on when it declares the same structs by hand: it is ASCII only, and every struct and field it declares is printed with its offset and size by [the layouts program](../../test/layouts/README.md), so a struct or field added to the header and not to the printer fails the build.
+
+<!-- generated: source-children -->
+- [core.h](../../../../include/weivel/core.h) - every public type, constant and call of the core, each documented at its declaration, behind `WEIVEL_API`
+<!-- end generated -->

@@ -1,0 +1,42 @@
+The implementation of the core: C11 files built into each of the three libraries, every one reaching the others through the internal headers here and never through the public header's exports. One file implements one area of decision and owns its calls of the ABI; a few files are the containers and seams those areas stand on. Each public call takes the core's one lock, resolves every handle it is handed through the handle table, reserves every event it will owe and every allocation it will need before it changes anything, so a call that runs out of memory takes back what it began and leaves the core as it found it, and ends through `weivel_core_end_call`, which gives back the reservations it did not use, announces the deadline when it moved and reports how many events wait. Every allocation goes through `memory.h`, which in every library a host links is the C library's own, and the lock in `mutex.c` holds the only platform-specific code. Why the core decides and never calls out, and what each area decides, is in [the core's docs](../../README.md).
+
+<!-- generated: source-children -->
+- [activation.c](../../../src/activation.c) - the activation plan: ordering a set of plugins by what they provide and consume, its cycles, found iteratively so a long chain cannot exhaust the stack, and its refusals
+- [capabilities.c](../../../src/capabilities.c) - capabilities: providing an implementation, verifying an activation, listing and watching the verified implementations, and what a plugin loses when it stops
+- [capabilities.h](../../../src/capabilities.h) - the capability records, their provisions, holdings and watches, and the calls the rest of the core makes on them
+- [compatibility.c](../../../src/compatibility.c) - deciding on which axis, the application or the api, a host refuses a manifest
+- [compatibility.h](../../../src/compatibility.h) - what a host is for compatibility, and the one decision on it
+- [constraints.c](../../../src/constraints.c) - constrained wants: the host's constraint vocabulary, the polls, the capacity questions put to the caller and the answers reported to them
+- [constraints.h](../../../src/constraints.h) - the constraint vocabulary and the calls that start, time out and answer a constrained want
+- [core.c](../../../src/core.c) - creating and destroying a core, draining the queue, the next deadline and advancing time, and how every call ends
+- [core_internal.h](../../../src/core_internal.h) - the core's own struct, the kinds of record a handle names, and each public struct's first published size
+- [deadlines.c](../../../src/deadlines.c) - the deadline heap with its index by subject, so adding, cancelling and taking the earliest each cost O(log n)
+- [deadlines.h](../../../src/deadlines.h) - the times a core waits on, one per handle, earliest first
+- [events.c](../../../src/events.c) - the event queue: a growing ring with reservations, so a reserved event is always delivered, and the deadline announcement's own room
+- [events.h](../../../src/events.h) - the event queue's calls: reserve, deliver, push, pop, take back the newest, and the copies an event owns
+- [handle_state.c](../../../src/handle_state.c) - answering whether a want or watch is live, how it settled, or how it ended
+- [handles.c](../../../src/handles.c) - the handle table: slots and generations, typed resolution, remembered endings and retired slots
+- [handles.h](../../../src/handles.h) - the handle table's calls, and why a stale handle can never resolve
+- [ledger.c](../../../src/ledger.c) - the ledger: the relationships each plugin's activation made, why a plugin was quarantined, and the snapshot and single row answered from them
+- [ledger.h](../../../src/ledger.h) - the id sets, kept refusals and relationships the ledger records on each plugin
+- [list.h](../../../src/list.h) - the circular doubly-linked list every record is chained by, embedded in the record
+- [manifest.c](../../../src/manifest.c) - checking a caller's manifest and copying it into one allocation the core owns, every default resolved
+- [manifest.h](../../../src/manifest.h) - the owned manifest, each manifest struct's first size, and the readers of caller lists and size-prefixed elements
+- [memory.c](../../../src/memory.c) - the allocation seam of the test build: fails the allocation it is armed for
+- [memory.h](../../../src/memory.h) - the one allocator every file uses, the C library's own outside the test build
+- [mutex.c](../../../src/mutex.c) - the non-recursive lock, on an SRW lock on Windows and a pthread mutex elsewhere
+- [mutex.h](../../../src/mutex.h) - the lock's calls
+- [plugins.c](../../../src/plugins.c) - plugins: registering a manifest, opening, releasing, quarantining and forgetting, the payload, and what a late call of a plugin is answered
+- [plugins.h](../../../src/plugins.h) - the plugin record, its life states, its declarations and its reported refusals
+- [reach.c](../../../src/reach.c) - reach: whether a plugin may reach a service or capability id and from which provider, and the refusals of reach it reports once
+- [registry.c](../../../src/registry.c) - the service registry: registering, unregistering, getting and watching services, the ids a plugin may reach, holdings and their release
+- [registry.h](../../../src/registry.h) - the slots, registrations and holdings of the registry, and the calls the rest of the core makes on them
+- [sized.c](../../../src/sized.c) - reading and writing a caller's size-prefixed struct
+- [sized.h](../../../src/sized.h) - the size convention's two copies and the size a struct declares
+- [supports.c](../../../src/supports.c) - answering whether this core supports a manifest, without registering it
+- [table.c](../../../src/table.c) - the hash table from byte keys to records, with room reserved ahead so an add cannot fail
+- [table.h](../../../src/table.h) - the hash table's calls, and why every key lives in the record it maps to
+- [text.c](../../../src/text.c) - formatting and copying texts into allocations of exactly their size
+- [text.h](../../../src/text.h) - the two text helpers
+- [waiting.c](../../../src/waiting.c) - wants: making one, settling it when a provider arrives, rejecting it, timing it out and withdrawing it
+<!-- end generated -->
