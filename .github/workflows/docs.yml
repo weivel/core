@@ -1,0 +1,34 @@
+name: Docs
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+    uses: intisy/tarn/.github/workflows/check-docs.yml@51a6982a3c6c409e3b5fdc7ece5a503812f85585
+    with:
+      standard-ref: 51a6982a3c6c409e3b5fdc7ece5a503812f85585
+      mode: check
+    secrets:
+      envPAT: ${{ secrets.TARN_TOKEN }}
+
+  warn:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: read
+      issues: write
+    uses: intisy/tarn/.github/workflows/check-docs.yml@51a6982a3c6c409e3b5fdc7ece5a503812f85585
+    with:
+      standard-ref: 51a6982a3c6c409e3b5fdc7ece5a503812f85585
+      mode: warn
+      default-branch: ${{ github.ref_name }}
+    secrets:
+      envPAT: ${{ secrets.TARN_TOKEN }}
