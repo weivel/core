@@ -21,8 +21,9 @@ the input name them.
 
 ## Refusals
 
-A plan refuses, in the order it finds them: a handle that names no plugin (`stale_handle`), a plugin listed again
-(`repeated_plugin`), then each plugin with a mandatory need that nothing in the set or the host meets (`unmet_need`).
+A plan refuses, in the order it finds them: first, walking the plugins in input order, each handle that names no
+plugin (`stale_handle`) and each plugin listed again (`repeated_plugin`), interleaved as the input has them; then each
+plugin with a mandatory need that nothing in the set or the host meets (`unmet_need`).
 Whether a need is degradable never excuses an absence. An optional need nothing meets refuses nothing: the plugin
 starts, and a want for that service waits. A refused plugin draws no edge and stops being a provider, so refusal runs
 again until a pass refuses nothing more.
@@ -44,7 +45,9 @@ always answers the same order, not merely some order that puts each provider fir
 ## The answer
 
 A plan, including one that refuses or cycles, is answered `WEIVEL_STATUS_OK` and queues nothing. Only a malformed call
-is refused, answered `WEIVEL_STATUS_MALFORMED` with a refusal queued: a NULL core or plan, a plan below its first shape
-or still holding one, NULL plugins with a count, an edge source that is neither kind, or a list of host services that
-cannot be read. Every array and text of a plan lives in storage private to the core until
-`weivel_activation_plan_release`, and each refusal's subject sits at the same index as the refusal.
+is refused, answered `WEIVEL_STATUS_MALFORMED` with a refusal queued when the core is given: a NULL core or plan, a
+plan below its first shape or still holding one, NULL plugins with a count, an edge source that is neither kind, or a
+list of host services that cannot be read. When memory runs out while planning, the answer is
+`WEIVEL_STATUS_OUT_OF_MEMORY` and the caller's plan is left as it was, holding nothing. Every array and text of a plan
+lives in storage private to the core until `weivel_activation_plan_release`, and each refusal's subject sits at the
+same index as the refusal.
