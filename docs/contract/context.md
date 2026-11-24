@@ -27,8 +27,8 @@ as its forget, so no call that passed the check reaches the core after the forge
     settled keeps waiting: it settles with the next registration it accepts, a constrained one by its polls, or is
     refused at its timeout, and a constrained want whose budget is spent while nothing provides the service is refused
     `unmet_constraint`. Only the stopping plugin's own wants are rejected `stopped`. A want that settled with the
-    service is a holding, which the stop revokes as it revokes every holding (see Events below, and
-    [handles](handles.md) for a holding that outlives its revocation).
+    service is a holding, which the stop revokes as it revokes every holding, and which ends with that revocation unless the registration
+    awaits its releases (see Events below, and [handles](handles.md) for a holding that outlives its revocation).
   - A watch hears every later registration and unregistration the core reports for the id, the object on the one and
     nothing on the other, until the plugin stops watching.
   - A registration lasts until the plugin unregisters it or stops.
